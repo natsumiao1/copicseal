@@ -2,6 +2,7 @@ import { Grid2x2, Grid3x3, LayoutGrid } from 'lucide-react';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import { Button } from '@/shared/ui/button';
+import { CollageLayoutPicker } from './collage-layout-picker';
 
 const GRID_PRESETS = [
   { label: '2 宫格', layoutId: 'two-columns', icon: Grid2x2 },
@@ -33,6 +34,11 @@ function getAutoLayoutId(photoCount: number) {
 export function CollageToolbar() {
   const { photos } = usePhotos();
   const { present, setLayout, updateCanvas } = useCollageStore();
+
+  // 当前布局来自布局库而非上面的快捷预设时，让「布局库」按钮保持按下态
+  const libraryActive =
+    present.canvas.layoutMode === 'grid' &&
+    !GRID_PRESETS.some((preset) => preset.layoutId === present.layoutId);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -66,6 +72,8 @@ export function CollageToolbar() {
       >
         自动排版
       </Button>
+
+      <CollageLayoutPicker active={libraryActive} />
 
       <Button
         variant={present.canvas.layoutMode === 'free' ? 'default' : 'outline'}
