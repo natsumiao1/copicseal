@@ -57,7 +57,7 @@ commitlint.config.js  # Commit 规范
 
 | 规则 | 说明 |
 |------|------|
-| 组件 | 函数组件 + Hooks，不写 class 组件 |
+| 组件 | 函数组件 + Hooks，**尽量不写 class 组件**；仅当必须用 React 内置 class 能力（错误边界）时才用，当前唯一例外是 `CoErrorBoundary` |
 | 类型导入 | `import type` 导入仅用作类型的模块 |
 | 路径别名 | 使用 `@/` 引用 `src/` 目录 |
 | 组件命名 | PascalCase（如 `CoButton`、`CoImageView`） |
