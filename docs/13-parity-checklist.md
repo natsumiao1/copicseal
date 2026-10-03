@@ -119,8 +119,9 @@
 - [ ] **A28 旧配置迁移**｜缺口｜成本 中
   旧：electron-store JSON（`name=config` / `config.dev`）｜新：SQLite `config_entries` 键值表；`src-tauri/src` 内没有读取旧 config 的迁移代码 → 升级后设置全丢（待确认是否有安装器侧迁移）
 
-- [ ] **A29 拼图页三处半成品**｜缺口｜成本 中
-  新：60 步 undo/redo（`store/use-collage-store.ts:95-145`）、标注 text/arrow/rect/circle（`store:242-282`）、`layouts.ts` 数十种布局——全部无 UI 入口；工具栏只暴露 2/3/4/6 宫格 + 自动排版 + 自由布局，`COLLAGE_LAYOUT_GROUPS` 无人引用
+- [ ] **A29 拼图页两处半成品**｜缺口｜成本 中
+  新：60 步 undo/redo（`store/use-collage-store.ts:125-156`）、标注 text/arrow/rect/circle（`store:255-291`）——类型与 store 动作齐全，但无 UI 入口，画布也不渲染标注。
+  布局库已补齐：`COLLAGE_LAYOUT_GROUPS` 经 `components/collage-layout-picker.tsx` 在工具栏「布局库」弹窗中全量展示（54 种、带缩略图、按图片数量分组），不再无引用。
   旧：无拼图功能，属新版新增能力的未完成部分
 
 - [ ] **A30 收藏 / 最近使用不持久化**｜缺口｜成本 小
