@@ -29,9 +29,20 @@ function getDefaultPresentState(): CollagePresentState {
   };
 }
 
-function normalizeSlots(layoutId: string, slotItems: CollageSlotState[]): CollageSlotState[] {
+/**
+ * 归一化槽位数组，使其与当前布局匹配。
+ *
+ * - grid：长度严格等于 layout.count（多退少补）。历史实现取 `Math.max(count, slotItems.length)`
+ *   导致「大布局切小布局」后残留多余槽位并被持久化，画布按 layout.slots 取值时越界崩溃。
+ * - free：槽位按 index 承载每张图的缩放/位移，长度跟素材走，不能按 layout 裁剪。
+ */
+function normalizeSlots(
+  layoutId: string,
+  slotItems: CollageSlotState[],
+  layoutMode: CollageCanvasState['layoutMode'] = 'grid',
+): CollageSlotState[] {
   const layout = COLLAGE_LAYOUTS.find((item) => item.id === layoutId) ?? DEFAULT_LAYOUT;
-  const count = Math.max(layout.count, slotItems.length, 1);
+  const count = layoutMode === 'free' ? Math.max(slotItems.length, 1) : layout.count;
   return Array.from({ length: count }, (_, index) => {
     const existing = slotItems[index];
     return existing
@@ -97,7 +108,7 @@ export const useCollageStore = create<CollageStoreState>()(
           const previous = clonePresentState(state.present);
           const next = clonePresentState(state.present);
           updater(next);
-          next.slotItems = normalizeSlots(next.layoutId, next.slotItems);
+          next.slotItems = normalizeSlots(next.layoutId, next.slotItems, next.canvas.layoutMode);
           next.annotations = normalizeAnnotations(next.annotations);
 
           if (JSON.stringify(previous) === JSON.stringify(next)) {
@@ -158,12 +169,14 @@ export const useCollageStore = create<CollageStoreState>()(
       setLayout: (layoutId) => {
         get().commit((draft) => {
           draft.layoutId = layoutId;
-          draft.slotItems = normalizeSlots(layoutId, draft.slotItems);
+          draft.slotItems = normalizeSlots(layoutId, draft.slotItems, draft.canvas.layoutMode);
         });
         set((state) => ({
           selectedSlotIndex:
             state.selectedSlotIndex !== null &&
-            state.selectedSlotIndex < normalizeSlots(layoutId, state.present.slotItems).length
+            state.selectedSlotIndex <
+              normalizeSlots(layoutId, state.present.slotItems, state.present.canvas.layoutMode)
+                .length
               ? state.selectedSlotIndex
               : null,
         }));
@@ -300,6 +313,7 @@ export const useCollageStore = create<CollageStoreState>()(
             slotItems: normalizeSlots(
               persisted.present.layoutId ?? currentState.present.layoutId,
               persisted.present.slotItems ?? currentState.present.slotItems,
+              persisted.present.canvas?.layoutMode ?? currentState.present.canvas.layoutMode,
             ),
             annotations: normalizeAnnotations(
               persisted.present.annotations ?? currentState.present.annotations,

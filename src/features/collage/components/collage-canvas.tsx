@@ -215,14 +215,18 @@ export function CollageCanvas({
                   padding: present.canvas.padding,
                 }}
               >
-                {present.slotItems.map((slotItem, index) => {
+                {/* 以 layout.slots 为循环源：slotItems 是可持久化的用户状态，长度可能
+                    暂时超过当前布局的槽位表（历史脏数据、切换布局的中间态），
+                    按 slotItems 循环会让 layout.slots[index] 越界并清空整窗。 */}
+                {layout.slots.map((gridSlot, index) => {
+                  const slotItem = present.slotItems[index] ?? createEmptySlotState();
                   const photo = slotItem.photoId
                     ? (photos.find((item) => item.id === slotItem.photoId) ?? null)
                     : null;
 
                   return (
                     <button
-                      key={`${layout.id}-${slotItem.photoId ?? `empty-${layout.slots[index].x}-${layout.slots[index].y}`}`}
+                      key={`${layout.id}-${slotItem.photoId ?? `empty-${gridSlot.x}-${gridSlot.y}`}`}
                       type="button"
                       className={cn(
                         'group relative overflow-hidden bg-muted/35 text-left transition-colors',
@@ -231,8 +235,8 @@ export function CollageCanvas({
                           : 'hover:bg-muted/50',
                       )}
                       style={{
-                        gridColumn: `${layout.slots[index].x + 1} / span ${layout.slots[index].w}`,
-                        gridRow: `${layout.slots[index].y + 1} / span ${layout.slots[index].h}`,
+                        gridColumn: `${gridSlot.x + 1} / span ${gridSlot.w}`,
+                        gridRow: `${gridSlot.y + 1} / span ${gridSlot.h}`,
                         borderRadius: slotItem.borderRadius ?? present.canvas.borderRadius,
                         boxShadow:
                           present.canvas.shadow > 0
