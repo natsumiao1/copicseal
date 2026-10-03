@@ -6,6 +6,7 @@ import { SettingsPage } from '@/features/settings';
 import TemplatePage from '@/features/template';
 import { platformCapabilities } from '@/platform';
 import { platformRuntime } from '@/platform/providers/platform-runtime';
+import { CoErrorBoundary } from '@/shared/components/co-error-boundary';
 import { CoSidebar } from '@/shared/components/co-sidebar';
 import { cn } from '@/shared/lib/utils';
 import { NavigationProvider } from '@/shared/providers/navigation-provider';
@@ -130,10 +131,13 @@ function AppContent() {
 }
 
 function App() {
+  // 最外层兜底：任一页面渲染抛错时显示错误卡片，而不是清空整窗
   return (
-    <WindowStyleProvider>
-      <AppContent />
-    </WindowStyleProvider>
+    <CoErrorBoundary>
+      <WindowStyleProvider>
+        <AppContent />
+      </WindowStyleProvider>
+    </CoErrorBoundary>
   );
 }
 
