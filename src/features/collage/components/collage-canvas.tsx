@@ -33,14 +33,21 @@ export function CollageCanvas({
     return Math.max(280, Math.min(availableWidth, widthFromHeight));
   }, [ratioValue, viewportSize.height, viewportSize.width]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: present.layoutId 用于触发时机而非回调体——切换布局后 normalizeSlots 会补出空槽位，photos 未变时需要重跑一次自动填充
   useEffect(() => {
     if (present.canvas.layoutMode === 'free') {
       commit((draft) => {
-        draft.slotItems = photos.map((photo, index) => ({
-          ...createEmptySlotState(),
-          ...(draft.slotItems[index] ?? {}),
-          photoId: photo.id,
-        }));
+        draft.slotItems = photos.map((photo, index) => {
+          const existing = draft.slotItems[index];
+          // 槽位调整（位移/缩放/旋转）属于某张图：index 对应的图换了就从干净状态开始，
+          // 否则旧图的残留位移会套到新图上，把图推出可视区。
+          const base =
+            existing && existing.photoId === photo.id ? existing : createEmptySlotState();
+          return {
+            ...base,
+            photoId: photo.id,
+          };
+        });
       });
       return;
     }
@@ -56,10 +63,10 @@ export function CollageCanvas({
           return slot;
         }
 
-        return {
-          ...slot,
-          photoId: null,
-        };
+        // 图已失效（换会话重新导入后 photoId 全部变化，而 slotItems 会被持久化）：
+        // 必须连同位移/缩放一并重置，否则新图会继承旧图的残留 transform，
+        // 表现为「槽位明明填了图却像空的一样」。
+        return createEmptySlotState();
       });
 
       const availablePhotoIds = photos
@@ -73,12 +80,12 @@ export function CollageCanvas({
 
         const nextPhotoId = availablePhotoIds.shift() ?? null;
         return {
-          ...slot,
+          ...createEmptySlotState(),
           photoId: nextPhotoId,
         };
       });
     });
-  }, [commit, photos, present.canvas.layoutMode]);
+  }, [commit, photos, present.layoutId, present.canvas.layoutMode]);
 
   const freeLayoutItems = useMemo(
     () =>

@@ -199,10 +199,16 @@ export const useCollageStore = create<CollageStoreState>()(
       },
       assignPhotoToSlot: (index, photoId) => {
         get().commit((draft) => {
-          draft.slotItems[index] = {
-            ...draft.slotItems[index],
-            photoId,
-          };
+          const current = draft.slotItems[index];
+          // 换图时重置位移/缩放/旋转：这些调整是针对旧图构图的，
+          // 直接套给新图会把图推出槽位可视区；同图重复赋值则保持调整。
+          draft.slotItems[index] =
+            current && current.photoId === photoId
+              ? current
+              : {
+                  ...createEmptySlotState(),
+                  photoId,
+                };
         });
         set({
           selectedSlotIndex: index,
