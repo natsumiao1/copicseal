@@ -148,9 +148,17 @@ function CollageAssetsPanel() {
                 const active = index === currentIndex;
 
                 return (
+                  // biome-ignore lint/a11y/noStaticElementInteractions: 整张素材卡是拖拽源，拖拽把手就是卡片本身（含内层 button 与缩略图）
                   <div
                     key={photo.id}
                     draggable
+                    onDragStart={(event) => {
+                      // 画布槽位的 onDrop 按这两个类型读取；不 setData 拖拽就永远是空操作。
+                      // text/plain 兜底：个别 WebKit 版本对自定义类型支持不稳。
+                      event.dataTransfer.setData('text/copicseal-photo-id', photo.id);
+                      event.dataTransfer.setData('text/plain', photo.id);
+                      event.dataTransfer.effectAllowed = 'copy';
+                    }}
                     className={cn(
                       'group shrink-0 border bg-card transition-colors',
                       active

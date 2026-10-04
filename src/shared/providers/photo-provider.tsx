@@ -7,14 +7,9 @@ import {
   useId,
   useState,
 } from 'react';
-import { platformRuntime } from '@/platform/providers/platform-runtime';
-
-const { onNativeFileDrop } = platformRuntime;
-
 import { releaseSessionAssets, trackSessionAssets } from '@/platform/services/asset-service';
 import {
   type ImportProgressSnapshot,
-  importPhotosViaPaths,
   processDroppedFiles,
   selectPhotosFromDirectory,
   selectPhotosViaDialog,
@@ -187,52 +182,63 @@ export const PhotoProvider: FC<{ children: ReactNode }> = ({ children }) => {
   );
 
   useEffect(() => {
-    // 隐藏页不再监听原生拖放：页面常驻挂载后，否则两个功能页会同时响应同一次拖入。
+    // 隐藏页不再监听文件拖放：页面常驻挂载后，否则两个功能页会同时响应同一次拖入。
     if (!pageActive) {
       setIsDraggingOver(false);
       return;
     }
 
-    let cleanup: (() => void) | undefined;
+    // 关闭 Tauri dragDropEnabled 后原生 onDragDropEvent 不再触发（该开关的语义就是
+    // 「原生拖放开 = DOM 拖放关」），Finder 拖入改走标准 DOM 事件。
+    // 只认 Files 类型：画布内部的图片拖拽由槽位自行处理，这里不拦截。
+    const hasFiles = (event: DragEvent) => event.dataTransfer?.types.includes('Files') ?? false;
 
-    try {
-      const unlisten = onNativeFileDrop(async (event) => {
-        switch (event.payload.type) {
-          case 'enter':
-            setIsDraggingOver(true);
-            break;
-          case 'leave':
-            setIsDraggingOver(false);
-            break;
-          case 'drop': {
-            setIsDraggingOver(false);
-            startImport('drop');
-            const result = await importPhotosViaPaths(event.payload.paths, {
-              onProgress: (progress) => updateImportProgress('drop', progress),
-              onPhotoImported: (photo) => addPhotos([photo]),
-              onPhotoUpdated: updatePhoto,
-            });
-            if (!result.length) {
-              finishImport('drop');
-              break;
-            }
-            finishImport('drop');
-            break;
-          }
-        }
-      });
+    const handleDragEnter = (event: DragEvent) => {
+      if (!hasFiles(event)) {
+        return;
+      }
+      event.preventDefault();
+      setIsDraggingOver(true);
+    };
 
-      cleanup = () => {
-        unlisten.then((fn) => fn());
-      };
-    } catch {
-      cleanup = undefined;
-    }
+    const handleDragOver = (event: DragEvent) => {
+      if (!hasFiles(event)) {
+        return;
+      }
+      // 不阻止默认行为就不会触发 drop，浏览器会按默认行为打开该文件
+      event.preventDefault();
+    };
+
+    const handleDragLeave = (event: DragEvent) => {
+      // relatedTarget 为空表示指针离开窗口
+      if (event.relatedTarget === null) {
+        setIsDraggingOver(false);
+      }
+    };
+
+    const handleDrop = (event: DragEvent) => {
+      const files = event.dataTransfer?.files;
+      if (!files?.length) {
+        return;
+      }
+      event.preventDefault();
+      setIsDraggingOver(false);
+      // 空态 CoDropZone 会 stopPropagation 并自行导入，这里兜住其余区域
+      void importViaDrop(files);
+    };
+
+    window.addEventListener('dragenter', handleDragEnter);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleDrop);
 
     return () => {
-      cleanup?.();
+      window.removeEventListener('dragenter', handleDragEnter);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleDrop);
     };
-  }, [addPhotos, finishImport, pageActive, startImport, updateImportProgress, updatePhoto]);
+  }, [importViaDrop, pageActive]);
 
   const currentPhoto = photos[currentIndex] ?? null;
 

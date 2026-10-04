@@ -259,12 +259,23 @@ export function CollageCanvas({
                         }
                         selectSlot(index);
                       }}
+                      onDragEnter={(event) => {
+                        // WKWebView/Safari 要求 dragenter 与 dragover 都被取消才放行 drop，
+                        // 只取消 dragover 时拖拽高亮正常但松手不触发 drop（Chrome 则只看 dragover）。
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = 'copy';
+                      }}
                       onDragOver={(event) => {
                         event.preventDefault();
+                        // WKWebView/Safari：dragover 不显式声明 dropEffect 时，
+                        // 可能与 dragstart 的 effectAllowed 不匹配导致 drop 根本不触发。
+                        event.dataTransfer.dropEffect = 'copy';
                       }}
                       onDrop={(event) => {
                         event.preventDefault();
-                        const photoId = event.dataTransfer.getData('text/copicseal-photo-id');
+                        const photoId =
+                          event.dataTransfer.getData('text/copicseal-photo-id') ||
+                          event.dataTransfer.getData('text/plain');
                         if (photoId) {
                           assignPhotoToSlot(index, photoId);
                         }

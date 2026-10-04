@@ -22,7 +22,8 @@
         "shadow": true,
         "hiddenTitle": false,
         "acceptFirstMouse": true,
-        "titleBarStyle": "Overlay"
+        "titleBarStyle": "Overlay",
+        "dragDropEnabled": false
       }
     ],
     "security": {
