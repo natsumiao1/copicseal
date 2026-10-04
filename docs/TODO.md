@@ -196,19 +196,22 @@
 
 ---
 
-## Phase 11 — Web-first 平台抽象改造
+## Phase 11 — 平台层收口（Tauri-only）
 
-- [ ] 建立 `platform/contracts`、`services`、`providers`、错误类型与能力声明
-- [ ] 盘点并标记所有 Tauri `invoke`、浏览器 API、图片处理、文件和存储调用点
-- [ ] 建立 Tauri / Web Provider 注册与选择性降级机制
-- [ ] 定义仅 `PLATFORM_NOT_IMPLEMENTED`、`PLATFORM_UNSUPPORTED` 可触发降级的错误规则
+> 2026-10-04 决定：产品放弃 Web 端。平台层保留 Contract 作为业务与宿主的唯一边界，只注册 Tauri Provider
+
+- [x] 建立 `platform/contracts`、`services`、错误类型与能力声明
+- [x] 盘点并清理所有浏览器 API 调用点与非 Tauri 分支
+- [x] 删除 `src/platform/providers/web/`，`provider-registry` 只注册 Tauri Provider
+- [x] `asset-service` 移除 `webFiles` 浏览器选图与 `toUrl` 分支
+- [x] `export-service` 移除浏览器下载导出分支
+- [x] 移除 `PLATFORM_NOT_IMPLEMENTED` / `PLATFORM_UNSUPPORTED` 的降级编排（错误类型保留上抛）
 - [ ] 迁移图片读取、缩略图、缩放、编码与导出调用到 Image Contract
 - [ ] 为 HEIC/HIF 导出实现原始素材的临时高质量源，并清理或短期缓存该源
-- [ ] 迁移导入、保存、目录选择和浏览器下载到 File / Dialog Contract
+- [ ] 迁移导入、保存、目录选择到 File / Dialog Contract
 - [ ] 迁移设置、收藏、最近使用和缓存索引到 Storage Contract
-- [ ] 将托盘、窗口、自动更新等能力限制为桌面增强，并在 Web 提供能力提示
-- [ ] 为各 Provider 与降级路径补充单元测试
-- [ ] 验证纯 Web 构建、Tauri 构建、核心导出流和预览/导出一致性
+- [ ] 为平台服务补充单元测试
+- [ ] 验证 Tauri 构建、核心导出流和预览/导出一致性
 
 ---
 
@@ -273,3 +276,53 @@
 - [ ] Windows 代码签名证书
 - [ ] 独立的 lint 与类型检查工作流（复用 `pnpm run ci` 与 `tsc --noEmit`）
 - [ ] 清理 `features/settings/components/co-settings-dialog.tsx` 中无人引用的更新入口
+
+---
+
+## Phase 16 — 拼图文件夹直览
+
+> 2026-10-04 立项：拼图素材区改为左侧双栏文件夹直览，需求见 02 / 08 / 09
+> 范围：仅 Collage 页面；Template 素材区保持导入模式不变
+
+### 16.1 平台层（Rust / Tauri）
+
+- [x] 验证 HEIC/HIF 直读原文件生成缩略图的链路（代码级确认：`convert_heic_to_jpeg_path` 直接接受原文件路径，macOS 走 `sips`、Windows 走 WIC；运行时验证随 16.6 回归执行）
+- [x] 新增直览缩略图命令：直接以原文件为源生成缩略图，按原路径+mtime 哈希写入缓存（`ensure_browse_thumbnail`）
+- [x] 新增子目录枚举命令（文件夹树按需展开，不递归扫描，跳过隐藏目录）（`list_subdirectories`）
+- [x] 新增根节点枚举能力：用户主目录 + 外接磁盘由 Rust 提供（`list_root_directories`），最近使用的文件夹由前端持久化维护
+- [x] 平台能力声明补充文件夹直览项（`capabilities.files.folderBrowse`）
+
+### 16.2 布局与插槽
+
+- [x] `shared/layouts/business-workbench` 增加可选左侧栏插槽，`Assets` 改为可选
+- [x] 拼图页接入「文件夹树 + 图片预览栏」双栏，移除底部素材条与导入按钮
+
+### 16.3 文件夹树
+
+- [x] 根节点：最近使用 / 主目录 / 外接磁盘
+- [x] 懒加载展开子目录、展开与选中态样式
+- [x] 选中目录驱动图片预览栏加载
+
+### 16.4 图片预览栏
+
+- [x] 目录枚举 → 缩略图网格（按文件名排序）
+- [x] 缩略图按需生成（条目进入视口时触发）
+- [x] 大目录虚拟滚动
+- [x] 点击选中当前图片（与画布、属性面板联动）
+- [x] hover 浮现「移除」，仅会话内隐藏、不删本地文件
+- [x] 拖入画布槽位（放入或替换），图片使用时才复制进缓存
+- [x] 未打开文件夹时的「打开文件夹」空态
+
+### 16.5 会话与恢复
+
+- [x] collage store 持久化 `folderPath`，启动时校验路径有效性（`removedPaths` 仅会话内、`recentFolders` 一并持久化）
+- [x] 路径失效提示重新选择，不伪造目录内容
+- [x] 最近打开的文件夹列表持久化并接入文件夹树根节点
+- [x] 手动刷新重新枚举目录内容
+
+### 16.6 验收
+
+- [x] `biome check`、`rustfmt`、`clippy` 通过
+- [ ] 拼图主流程回归：打开文件夹 → 选图 → 拖入画布 → 导出
+- [ ] 重启后文件夹与画布槽位恢复（槽位 `id` 跨会话稳定）
+- [ ] Template 素材区与导入流程无回归
