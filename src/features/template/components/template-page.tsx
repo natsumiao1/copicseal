@@ -687,7 +687,7 @@ export function TemplatePage() {
       await exportSingle(
         previewRef.current,
         options,
-        currentPhoto?.sourceFile ?? currentPhoto?.path,
+        currentPhoto?.path,
         createRunContext(currentPhoto?.name, outputDir, config.background),
       );
       notifyExportedDirectory(outputDir);
@@ -735,7 +735,7 @@ export function TemplatePage() {
           await exportSingle(
             previewRef.current,
             { ...options, presets },
-            photo.sourceFile ?? photo.path,
+            photo.path,
             createRunContext(photo.name, outputDir, photoConfig.background),
           );
           exported += 1;

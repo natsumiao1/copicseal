@@ -2,7 +2,7 @@
 
 ## 产品定位
 
-Copicseal（可图匠）是一个以图片处理为核心的 Web-first 跨平台应用，当前聚焦三项能力：
+Copicseal（可图匠）是一个以图片处理为核心的 Tauri 桌面应用，当前聚焦三项能力：
 
 1. 边框水印
 2. 拼图
@@ -10,7 +10,9 @@ Copicseal（可图匠）是一个以图片处理为核心的 Web-first 跨平台
 
 这不是通用设计软件，也不是素材管理平台。产品聚焦于“快速导入、即时预览、直接导出”的图片生产体验。
 
-浏览器是独立可运行的一等平台，应可完成核心导入、预览、编辑和导出流程。Tauri 是高性能桌面宿主，为图片处理、本地文件、存储和系统集成提供增强能力；浏览器确实无法实现的能力必须明确标注，而不是伪造桌面行为。
+拼图以文件夹为工作单元：素材区直接浏览本地文件夹内容（文件夹树 + 图片预览栏），只有真正投入画布的图片才进入缓存。文件夹直览只替代“先导入后使用”的入口，不提供标签、评级、归档等素材管理能力。
+
+产品只交付 Tauri 桌面形态，不再维护浏览器运行版本。图片处理、本地文件、存储与系统集成均由 Rust 侧提供；不再提供 Web Provider、浏览器降级路径或与之等价的伪实现。
 
 ---
 
@@ -31,7 +33,7 @@ Preview First
 Feature Oriented
 No Project System
 No Global Asset Workspace
-Web-first, Desktop Enhanced
+Desktop Native (Tauri)
 ```
 
 ### Preview First
@@ -56,13 +58,15 @@ Web-first, Desktop Enhanced
 
 - 不存在应用级素材中心
 - Template Assets 与 Collage Assets 分别归属于对应页面
+- Collage 的文件夹直览仍归属于拼图页面，不构成全局素材中心
 - 仅底层缓存、缩略图和文件访问能力可复用
 
-### Web-first, Desktop Enhanced
+### Desktop Native (Tauri)
 
-- 核心业务在 Web 与 Tauri 中使用同一套 React 代码和平台 Contract
-- Tauri 优先使用 Rust 与原生系统能力；单项能力未实现或不支持时，才按规则降级到 Web Provider
-- Web 不要求模拟托盘、任意路径写入或自动更新等桌面专有能力，但必须提供清晰的可用替代方案
+- 产品只在 Tauri 桌面端运行与交付
+- 平台 Contract 仍作为业务与宿主之间的唯一边界，但只注册 Tauri Provider
+- 不再提供浏览器降级路径，也不伪造桌面能力的 Web 等价物
+- 托盘、任意路径写入、自动更新等桌面能力按桌面语义直接实现
 
 ---
 
@@ -78,6 +82,7 @@ Web-first, Desktop Enhanced
 ### Collage
 
 - 多图拼图
+- 文件夹直览素材区（文件夹树 + 图片预览栏）
 - Grid Layout
 - Free Layout
 - 批量导出

@@ -205,7 +205,7 @@ export const PhotoProvider: FC<{ children: ReactNode }> = ({ children }) => {
       if (!hasFiles(event)) {
         return;
       }
-      // 不阻止默认行为就不会触发 drop，浏览器会按默认行为打开该文件
+      // 不阻止默认行为就不会触发 drop，内嵌 WebView 会按默认行为打开该文件
       event.preventDefault();
     };
 

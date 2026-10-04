@@ -10,11 +10,11 @@ interface PhotoExifState {
 
 /**
  * 会话级 EXIF 缓存：预览水印与右侧 EXIF 信息卡片共用同一份读取结果，
- * 避免对同一张图片重复解析（Web 端 ExifTool WASM 解析开销较大）。
+ * 避免对同一张图片重复解析。
  */
 const exifCache = new Map<string, Promise<ExifData | null>>();
 
-function resolveExif(photoId: string, source: string | File): Promise<ExifData | null> {
+function resolveExif(photoId: string, source: string): Promise<ExifData | null> {
   const cached = exifCache.get(photoId);
   if (cached) {
     return cached;
@@ -37,7 +37,7 @@ function resolveExif(photoId: string, source: string | File): Promise<ExifData |
  * 会渲染成空值；因此每张抓图前都要过这一关。结果复用同一份会话缓存。
  */
 export function ensurePhotoExif(photo: ImportedPhoto): Promise<ExifData | null> {
-  const source = photo.sourceFile ?? photo.path;
+  const source = photo.path;
   if (source === undefined || source === '') {
     return Promise.resolve(null);
   }
@@ -49,7 +49,7 @@ export function ensurePhotoExif(photo: ImportedPhoto): Promise<ExifData | null> 
 export function usePhotoExif(photo: ImportedPhoto | null): PhotoExifState {
   const [state, setState] = useState<PhotoExifState>({ exif: null, loading: false });
   const photoId = photo?.id;
-  const source = photo?.sourceFile ?? photo?.path;
+  const source = photo?.path;
 
   useEffect(() => {
     if (!photoId || source === undefined || source === '') {

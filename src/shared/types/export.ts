@@ -54,7 +54,7 @@ export interface ExportRunContext {
   baseName?: string;
   /** 模板导出所需的尺寸适配器；缺省时按元素当前尺寸直接捕获 */
   sizeAdapter?: ExportSizeAdapter;
-  /** 多档输出目录；缺省时逐档弹出保存对话框（Web 端退化为逐张下载） */
+  /** 多档输出目录；缺省时逐档弹出保存对话框 */
   outputDir?: string | null;
 }
 

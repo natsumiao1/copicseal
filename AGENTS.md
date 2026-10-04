@@ -50,7 +50,7 @@ commitlint.config.js  # Commit 规范
 6. **需求文档规范**：只描述新产品需要实现的功能，不提及旧项目（Electron/Vue3）的实现细节
 7. **大型改动前先让用户审阅**：涉及架构、需求文档、TODO 的变更，先交给用户审阅再执行
 8. **shadcn 组件最小化修改**：安装的 shadcn/ui 组件必须最大限度减少修改，优先在业务侧用 `className`、`variant`、组件组合来扩展；一旦改动 `src/shared/ui/` 下的组件源码，必须写入 [src/shared/ui/README.md](src/shared/ui/README.md)，说明**哪个组件、改了什么、应用于什么地方**。组件升级时按该文件逐条回填改动
-9. **当前阶段以 Tauri 桌面端为主要开发与验证目标**：暂不投入 Web 模式的功能补齐与降级验证；`src/platform/` 的平台抽象层保持不动，新增能力先在 Tauri 下跑通，Web 适配另行排期
+9. **仅交付 Tauri 桌面端**：产品已放弃 Web 模式；`src/platform/` 的平台抽象层作为业务与宿主的唯一边界保留，只注册 Tauri Provider，不新增 Web 降级分支；存量浏览器 API 分支在 `docs/TODO.md` Phase 11（平台层收口）中清理
 
 ## 代码编写规范
 

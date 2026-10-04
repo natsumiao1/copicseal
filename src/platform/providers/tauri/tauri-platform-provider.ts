@@ -2,7 +2,7 @@ import type { PlatformCapabilities, PlatformProvider } from '@/platform/contract
 
 export const tauriCapabilities: PlatformCapabilities = {
   image: { resize: true, composite: true, heicDecode: true },
-  files: { pickImages: true, saveToDirectory: true, download: true },
+  files: { pickImages: true, saveToDirectory: true, download: true, folderBrowse: true },
   system: { tray: true, openPath: true, autoUpdate: true },
 };
 

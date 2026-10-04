@@ -1,8 +1,7 @@
 import { snapdom } from '@zumer/snapdom';
 import { capEmbeddedImages } from '@/core/renderer';
 import type { ExportServiceContract } from '@/platform/contracts/platform';
-import { platformRuntime, writeExifSource } from '@/platform/providers/platform-runtime';
-import { webFiles } from '@/platform/providers/web/web-platform-provider';
+import { platformRuntime } from '@/platform/providers/platform-runtime';
 import type {
   ExportFormat,
   ExportOptions,
@@ -10,14 +9,8 @@ import type {
   ExportRunContext,
 } from '@/shared/types/export';
 
-const {
-  extractJpegExif,
-  getConfig,
-  insertJpegExif,
-  isNativeWindowAvailable,
-  saveImageDialog,
-  writeBinaryFile,
-} = platformRuntime;
+const { extractJpegExif, getConfig, insertJpegExif, saveImageDialog, writeBinaryFile } =
+  platformRuntime;
 
 export type {
   ExportFormat,
@@ -93,14 +86,9 @@ async function captureElement(
  * 导出落盘目录：直接取配置里「文件导出目录」（`output.default_path`），导出过程不再弹
  * 保存对话框。
  *
- * 读不到配置（或目录为空）时返回 null，调用方会退回逐张保存对话框兜底；
- * Web 端没有本地目录的概念，同样返回 null（最终退化为浏览器下载）。
+ * 读不到配置（或目录为空）时返回 null，调用方会退回逐张保存对话框兜底。
  */
 export async function resolveExportDirectory(): Promise<string | null> {
-  if (!isNativeWindowAvailable()) {
-    return null;
-  }
-
   try {
     // 取的是设置 → 导出里的「文件导出目录」（output.default_path），
     // 不是工作区目录（save_directory）
@@ -160,7 +148,7 @@ function buildFileName(baseName: string, preset: ExportPreset, used: Set<string>
  * 写入单个文件。
  *
  * 指定输出目录时直接落盘（多档导出不再逐档弹窗）；
- * 未指定时沿用保存对话框，Web 端退化为浏览器下载。
+ * 未指定时沿用保存对话框。
  */
 async function saveBytes(
   bytes: Uint8Array,
@@ -168,13 +156,6 @@ async function saveBytes(
   extension: string,
   outputDir?: string | null,
 ) {
-  if (!isNativeWindowAvailable()) {
-    const buffer = new ArrayBuffer(bytes.byteLength);
-    new Uint8Array(buffer).set(bytes);
-    await webFiles.save(new Blob([buffer]), fileName);
-    return;
-  }
-
   if (outputDir) {
     await writeBinaryFile(`${outputDir}/${fileName}`, Array.from(bytes));
     return;
@@ -223,7 +204,7 @@ export function cancelExportTask(taskId: string) {
 export async function exportSingle(
   element: HTMLElement,
   options: ExportOptions,
-  source?: string | File,
+  source?: string,
   context?: ExportRunContext,
 ): Promise<void> {
   const baseName = context?.baseName?.trim() || 'copicseal-export';
@@ -235,13 +216,9 @@ export async function exportSingle(
 
     if (options.preserveExif && preset.format === 'jpeg' && source) {
       try {
-        if (source instanceof File) {
-          bytes = await writeExifSource(source, bytes, fileName);
-        } else {
-          const exifSeg = await extractJpegExif(source);
-          const result = await insertJpegExif(Array.from(bytes), exifSeg);
-          bytes = new Uint8Array(result);
-        }
+        const exifSeg = await extractJpegExif(source);
+        const result = await insertJpegExif(Array.from(bytes), exifSeg);
+        bytes = new Uint8Array(result);
       } catch (err) {
         console.warn('EXIF 保留失败:', err);
       }

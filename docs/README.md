@@ -1,8 +1,8 @@
 # Copicseal 架构设计书
 
 > **项目**：Copicseal（可图匠）
-> **定位**：以图片处理为核心的 Web-first 跨平台应用
-> **架构**：React 19 + Web Platform，Tauri 2 + Rust 提供桌面增强
+> **定位**：以图片处理为核心的 Tauri 桌面应用
+> **架构**：React 19 + 平台 Contract，Tauri 2 + Rust 承载全部系统能力
 > **版本**：v1.0.0（重构版文档）
 > **日期**：2026-06-27
 
@@ -10,7 +10,7 @@
 
 ## 产品方向
 
-Copicseal 是一个以图片处理为核心的跨平台应用，当前只聚焦三个一级能力：
+Copicseal 是一个以图片处理为核心的 Tauri 桌面应用，当前只聚焦三个一级能力：
 
 - 边框水印
 - 拼图
@@ -27,6 +27,7 @@ Preview First
 Feature Oriented
 No Project System
 No Global Asset Workspace
+Desktop Native (Tauri)
 ```
 
 对应含义：
@@ -35,7 +36,7 @@ No Global Asset Workspace
 - 功能独立：Template 与 Collage 各自拥有独立页面、状态、交互与资产栏
 - 无项目系统：不引入工程、画册、工作区或长期编辑项目模型
 - 无全局素材库：素材只属于当前功能页，跨页面只共享底层缓存能力
-- Web-first：浏览器可独立完成核心工作流；Tauri 为桌面端提供高性能与系统增强能力
+- Desktop Native：仅交付 Tauri 桌面形态；平台 Contract 只注册 Tauri Provider，不留 Web 降级路径
 
 ---
 
@@ -61,7 +62,7 @@ Settings
 
 ## 全局布局
 
-Template 与 Collage 采用统一三栏布局：
+Template 采用统一三栏布局：
 
 ```txt
 ┌────────┬────────────────────────────┬──────────────┐
@@ -71,6 +72,16 @@ Template 与 Collage 采用统一三栏布局：
 │        ├────────────────────────────┤              │
 │        │         Assets             │              │
 └────────┴────────────────────────────┴──────────────┘
+```
+
+Collage 将 Assets 移至左侧，改为文件夹直览双栏：
+
+```txt
+┌────────┬──────────┬─────────────┬──────────────┬──────────────┐
+│        │ 文件夹树  │ 图片预览栏  │              │              │
+│ Nav    │          │             │  Workspace   │ Properties   │
+│        │          │             │              │              │
+└────────┴──────────┴─────────────┴──────────────┴──────────────┘
 ```
 
 设置页使用独立的设置中心布局，不复用业务三栏结构。
@@ -102,9 +113,10 @@ Template 与 Collage 采用统一三栏布局：
 
 ### Assets
 
-- 位于 Workspace 下方
+- Template 的 Assets 位于 Workspace 下方
 - 属于当前功能，而不是整个应用
 - Template Assets 与 Collage Assets 完全独立
+- Collage 素材区为左侧文件夹直览（文件夹树 + 图片预览栏），不占用 Workspace 下方区域
 - 仅共享底层素材缓存与文件能力
 
 ---
@@ -118,7 +130,7 @@ app        → 应用入口
 features   → 用户可见功能
 core       → 渲染与调度核心
 shared     → 通用 UI 与工具
-platform   → 平台能力 Contract、Provider 与选择性降级
+platform   → 平台能力 Contract 与 Tauri Provider
 bridge     → 迁移期间的 Tauri 内部适配层
 ```
 
@@ -160,7 +172,7 @@ src/
 | 08 | [产品需求规格](./08-product-requirements.md) | 完整功能需求清单 |
 | 09 | [拼图系统](./09-collage-system.md) | 拼图页面、布局模式、属性编辑与导出 |
 | 10 | [拼图开发清单](./10-collage-todo.md) | 拼图能力专项开发清单 |
-| 11 | [平台能力抽象与 Provider 改造方案](./11-platform-abstraction.md) | Web-first 平台边界、Provider 链与迁移计划 |
+| 11 | [平台能力抽象与 Provider 改造方案](./11-platform-abstraction.md) | 已废弃存档：Web-first 平台边界与 Provider 链 |
 | 12 | [发布流水线](./12-release-pipeline.md) | 打包目标、版本号同步、更新签名密钥与自动更新 |
 | 13 | [旧版对齐清单](./13-parity-checklist.md) | 与旧版桌面应用的差异盘点、成本与排期建议 |
 | TODO | [总开发待办](./TODO.md) | 从零落地的整体实施计划 |
@@ -171,3 +183,8 @@ src/
 - `shared/layouts` 只存放可复用布局组件，不承载 Template 或 Collage 的页面业务逻辑
 - `features/template` 与 `features/collage` 各自提供页面组件，并负责页面状态、事件编排与面板内容组合
 - 业务工作台布局固定为左侧 `Nav`，中间区域再垂直拆分为上方 `Workspace` 与下方 `Assets`，右侧为 `Properties`
+
+## 2026-10-04 补充约束
+
+- `shared/layouts/business-workbench` 增加可选左侧栏插槽，`Assets` 变为可选；Template 布局保持不变
+- Collage 使用「文件夹树 + 图片预览栏 + Workspace」的文件夹直览布局，见 [09 拼图系统](./09-collage-system.md)

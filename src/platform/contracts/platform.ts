@@ -2,11 +2,15 @@ import type { ExportOptions, ExportRunContext } from '@/shared/types/export';
 import type { ImportedPhoto } from '@/shared/types/photo';
 import type {
   AppConfig,
+  BrowseThumbnailMeta,
   CacheCleanupResult,
   CachedImageMeta,
   CacheOverview,
+  DirectoryNode,
+  FolderImageFile,
   FontInfo,
   ImageFileMeta,
+  RootDirectory,
 } from './index';
 import type { ImportProgressSnapshot } from './services';
 
@@ -44,6 +48,10 @@ export interface FileServiceContract {
   readImageFile(path: string): Promise<ImageFileMeta>;
   writeBinaryFile(path: string, contents: number[]): Promise<void>;
   listImageFilesInDirectory(path: string): Promise<string[]>;
+  listSubdirectories(path: string): Promise<DirectoryNode[]>;
+  listRootDirectories(): Promise<RootDirectory[]>;
+  listFolderImages(path: string): Promise<FolderImageFile[]>;
+  ensureBrowseThumbnail(path: string, cacheDir: string): Promise<BrowseThumbnailMeta>;
   importImageToCache(path: string, cacheDir: string): Promise<CachedImageMeta>;
   importImageBytesToCache(
     name: string,
@@ -92,7 +100,12 @@ export interface Platform {
 
 export interface PlatformCapabilities {
   image: { resize: boolean; composite: boolean; heicDecode: boolean };
-  files: { pickImages: boolean; saveToDirectory: boolean; download: boolean };
+  files: {
+    pickImages: boolean;
+    saveToDirectory: boolean;
+    download: boolean;
+    folderBrowse: boolean;
+  };
   system: { tray: boolean; openPath: boolean; autoUpdate: boolean };
 }
 

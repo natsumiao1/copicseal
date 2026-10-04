@@ -1,7 +1,6 @@
 import type { CachedImageMeta } from '@/platform/contracts';
 import type { AssetServiceContract, ImportPhotoOptions } from '@/platform/contracts/platform';
 import { platformRuntime } from '@/platform/providers/platform-runtime';
-import { webFiles } from '@/platform/providers/web/web-platform-provider';
 import {
   type ImportedPhoto,
   SUPPORTED_IMAGE_EXTENSIONS,
@@ -20,7 +19,6 @@ const {
   getConfig,
   importImageBytesToCache,
   importImageToCache,
-  isNativeWindowAvailable,
   listImageFilesInDirectory,
   openDirectoryDialog,
   openImageDialog,
@@ -61,22 +59,8 @@ function toImportedPhoto(meta: CachedImageMeta): ImportedPhoto {
     thumbnailUrl,
     thumbnailReady: meta.thumbnail_ready,
     isHeic: meta.ext === 'heic' || meta.ext === 'heif' || meta.ext === 'hif',
-  };
-}
-
-function toImportedPhotoFromFile(file: File): ImportedPhoto {
-  const previewUrl = webFiles.toUrl(file);
-  return {
-    id: photoId(file.name),
-    name: file.name,
-    path: file.name,
-    size: file.size,
-    mimeType: file.type || 'application/octet-stream',
-    previewUrl,
-    thumbnailUrl: previewUrl,
-    thumbnailReady: true,
-    isHeic: /\.(heic|heif|hif)$/i.test(file.name),
-    sourceFile: file,
+    width: meta.width,
+    height: meta.height,
   };
 }
 
@@ -144,11 +128,6 @@ async function resolveCacheDirectory(): Promise<string> {
 export async function selectPhotosViaDialog(
   options?: ImportPhotoOptions,
 ): Promise<ImportedPhoto[]> {
-  if (!isNativeWindowAvailable()) {
-    const selection = await webFiles.pickImages();
-    return processDroppedFiles(selection.files, options);
-  }
-
   const selected = await openImageDialog();
 
   if (!selected) {
@@ -219,15 +198,6 @@ export async function processDroppedFiles(
     current: 0,
     total: importableFiles.length,
   });
-
-  if (!isNativeWindowAvailable()) {
-    const photos = importableFiles.map(toImportedPhotoFromFile);
-    photos.forEach((photo, index) => {
-      options?.onPhotoImported?.(photo);
-      options?.onProgress?.({ current: index + 1, total: photos.length, currentName: photo.name });
-    });
-    return photos;
-  }
 
   for (const [index, file] of importableFiles.entries()) {
     const contents = Array.from(new Uint8Array(await file.arrayBuffer()));

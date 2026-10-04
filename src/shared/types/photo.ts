@@ -37,6 +37,8 @@ export interface ImportedPhoto {
   mimeType: string;
   /** 是否为 HEIC 格式 */
   isHeic: boolean;
-  /** Web 模式下保留原始 File，用于 EXIF 读取和写回。 */
-  sourceFile?: File;
+  /** 原图宽（像素）；导入元数据解析失败为 0，布局侧按 3:2 兜底 */
+  width: number;
+  /** 原图高（像素）；导入元数据解析失败为 0，布局侧按 3:2 兜底 */
+  height: number;
 }
