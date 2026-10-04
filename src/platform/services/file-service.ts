@@ -8,6 +8,11 @@ export class FileService implements FileServiceContract {
   writeBinaryFile = (path: string, contents: number[]) =>
     this.adapter.writeBinaryFile(path, contents);
   listImageFilesInDirectory = (path: string) => this.adapter.listImageFilesInDirectory(path);
+  listSubdirectories = (path: string) => this.adapter.listSubdirectories(path);
+  listRootDirectories = () => this.adapter.listRootDirectories();
+  listFolderImages = (path: string) => this.adapter.listFolderImages(path);
+  ensureBrowseThumbnail = (path: string, cacheDir: string) =>
+    this.adapter.ensureBrowseThumbnail(path, cacheDir);
   importImageToCache = (path: string, cacheDir: string) =>
     this.adapter.importImageToCache(path, cacheDir);
   importImageBytesToCache = (name: string, contents: number[], cacheDir: string) =>
@@ -23,8 +28,12 @@ export class FileService implements FileServiceContract {
 }
 
 export type {
+  BrowseThumbnailMeta,
   CacheCleanupResult,
   CachedImageMeta,
   CacheOverview,
+  DirectoryNode,
+  FolderImageFile,
   ImageFileMeta,
+  RootDirectory,
 } from '@/platform/contracts';

@@ -115,19 +115,24 @@ Template 页面的状态分两层：页面级的会话状态，以及逐张照�
 
 ---
 
-## 5.4 Collage Asset
+## 5.4 Collage 直览图片条目
 
-Collage 页面中的图片素材对象：
+Collage 素材区以文件夹为单位展示的图片条目：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| id | string | 唯一标识 |
+| id | string | 唯一标识，取自文件路径，保证跨会话稳定（画布槽位引用它） |
 | fileName | string | 原始文件名 |
 | filePath | string | 本地文件路径 |
-| previewUrl | string | 预览资源 |
-| thumbnailUrl | string | 缩略图资源 |
-| order | number | 素材排序 |
-| selected | boolean | 是否被选中 |
+| size | number | 文件大小（字节） |
+| thumbnailUrl | string \| null | 缩略图资源；尚未生成时为 `null` |
+
+约束：
+
+- 条目由目录枚举直接产生，不预先复制原文件
+- 从列表「移除」只在当前会话隐藏条目，不删除本地文件
+- 缩略图由后台任务直接以原文件为源生成，按原路径哈希写入缓存
+- 图片拖入画布或加入会话时才执行缓存导入
 
 ---
 
@@ -142,6 +147,8 @@ Collage 页面的当前工作状态：
 | canvasStyle | object | 间距、边距、背景、圆角、阴影 |
 | items | object[] | 画布中的图片项 |
 | selectedItemId | string | 当前选中图片项 |
+| folderPath | string \| null | 当前打开的文件夹路径；持久化用于会话恢复，`null` 表示未打开 |
+| removedPaths | string[] | 本次会话从列表移除的文件路径 |
 | exportConfig | object | 导出配置 |
 
 ### Collage Item
@@ -233,6 +240,7 @@ Collage 页面的当前工作状态：
 ## 5.8 存储原则
 
 - Template 与 Collage 运行态状态不做项目化持久化
+- Collage 记住当前打开的文件夹与最近打开的文件夹列表（轻量状态持久化，不含素材本体）
 - Settings 作为默认配置持久化存储
 - 模板收藏、最近使用等轻量状态可持久化
 - 素材缩略图与缓存由基础设施统一管理

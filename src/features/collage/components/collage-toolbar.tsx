@@ -1,4 +1,4 @@
-import { Grid2x2, Grid3x3, LayoutGrid } from 'lucide-react';
+import { Grid2x2, Grid3x3, LayoutGrid, Trash2 } from 'lucide-react';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import { Button } from '@/shared/ui/button';
@@ -33,7 +33,7 @@ function getAutoLayoutId(photoCount: number) {
 
 export function CollageToolbar() {
   const { photos } = usePhotos();
-  const { present, setLayout, updateCanvas } = useCollageStore();
+  const { present, setLayout, updateCanvas, clearAdaptiveCanvas } = useCollageStore();
 
   // 当前布局来自布局库而非上面的快捷预设时，让「布局库」按钮保持按下态
   const libraryActive =
@@ -82,6 +82,28 @@ export function CollageToolbar() {
       >
         自由布局
       </Button>
+
+      <Button
+        variant={present.canvas.layoutMode === 'adaptive' ? 'default' : 'outline'}
+        size="sm"
+        onClick={() => updateCanvas({ layoutMode: 'adaptive' })}
+      >
+        自适应
+      </Button>
+
+      {/* 只在自适应模式提供清空：grid 有自动填充（清了会被重新填满），free 恒显示全部照片 */}
+      {present.canvas.layoutMode === 'adaptive' ? (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!present.adaptiveTree}
+          title="清空画布上的全部照片（只清画布，不删除文件）"
+          onClick={clearAdaptiveCanvas}
+        >
+          <Trash2 data-icon="inline-start" />
+          清空画布
+        </Button>
+      ) : null}
     </div>
   );
 }

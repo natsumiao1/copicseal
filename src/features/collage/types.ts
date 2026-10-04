@@ -1,5 +1,25 @@
 export type CollageAspectPreset = '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '16:10' | 'custom';
-export type CollageLayoutMode = 'grid' | 'free';
+export type CollageLayoutMode = 'grid' | 'free' | 'adaptive';
+
+/** 自适应布局的插入方位：新照片落在目标照片的哪一侧。 */
+export type AdaptiveInsertDirection = 'left' | 'right' | 'top' | 'bottom';
+
+/**
+ * 自适应布局树：叶子 = 一张照片；split = 把父矩形按方向二分。
+ * `dir: 'v'` 左右分两列（children[0] 在左），`'h'` 上下分两行（children[0] 在上）。
+ */
+export type AdaptiveNode =
+  | { type: 'leaf'; photoId: string }
+  | { type: 'split'; dir: 'h' | 'v'; children: [AdaptiveNode, AdaptiveNode] };
+
+/** 自适应布局中一张照片的画布矩形（相对坐标，0..1）。 */
+export interface AdaptiveRect {
+  photoId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export type CollageExportFormat = 'png' | 'jpeg';
 
@@ -97,4 +117,6 @@ export interface CollagePresentState {
   exportSettings: CollageExportState;
   slotItems: CollageSlotState[];
   annotations: CollageAnnotation[];
+  /** 自适应布局树；仅 layoutMode === 'adaptive' 时有意义，null = 画布为空 */
+  adaptiveTree: AdaptiveNode | null;
 }

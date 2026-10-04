@@ -36,6 +36,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             fs::read_image_file,
             fs::list_image_files_in_directory,
+            fs::list_subdirectories,
+            fs::list_root_directories,
+            fs::list_folder_images,
+            fs::ensure_browse_thumbnail,
             fs::write_file,
             fs::convert_heic_to_jpeg,
             fs::import_image_to_cache,

@@ -1,8 +1,17 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import {
+  collectAdaptivePhotoIds,
+  hasAdaptivePhoto,
+  insertAdaptivePhoto,
+  insertAdaptiveRoot,
+  removeAdaptivePhoto,
+  replaceAdaptivePhoto,
+} from '../adaptive';
 import { COLLAGE_LAYOUTS } from '../layouts';
 import { createAnnotation, createEmptySlotState, getDefaultCanvasState } from '../lib';
 import type {
+  AdaptiveInsertDirection,
   CollageAnnotation,
   CollageCanvasState,
   CollageExportState,
@@ -26,6 +35,7 @@ function getDefaultPresentState(): CollagePresentState {
     },
     slotItems: Array.from({ length: DEFAULT_LAYOUT.count }, () => createEmptySlotState()),
     annotations: [],
+    adaptiveTree: null,
   };
 }
 
@@ -76,6 +86,14 @@ interface CollageStoreState {
   present: CollagePresentState;
   selectedSlotIndex: number | null;
   selectedAnnotationId: string | null;
+  /** 当前打开的直览文件夹；持久化用于会话恢复 */
+  folderPath: string | null;
+  /** 最近打开的文件夹（新→旧），供文件夹树根节点展示；持久化 */
+  recentFolders: string[];
+  /** 本次会话从直览列表「移除」的路径（仅隐藏，不删文件）；不持久化 */
+  removedPaths: string[];
+  /** 重启后等待槽位照片回填期间为 true：画布对账暂停，避免清空持久化的槽位 */
+  restorePending: boolean;
   commit: (updater: (draft: CollagePresentState) => void) => void;
   undo: () => void;
   redo: () => void;
@@ -90,6 +108,25 @@ interface CollageStoreState {
   updateSlot: (index: number, patch: Partial<CollageSlotState>) => void;
   resetSlot: (index: number) => void;
   removePhotoReferences: (photoId: string) => void;
+  /**
+   * 自适应布局：把新照片插到目标照片的指定方位。
+   * `targetPhotoId` 为 null = 沿画布外沿整体插入一整行/一列（根节点分割），
+   * 也是空画布放入第一张的入口。
+   */
+  insertAdaptivePhoto: (
+    targetPhotoId: string | null,
+    direction: AdaptiveInsertDirection,
+    newPhotoId: string,
+  ) => void;
+  /** 自适应布局：中心区拖放，替换目标照片（树形不变） */
+  replaceAdaptivePhoto: (targetPhotoId: string, newPhotoId: string) => void;
+  /** 自适应布局：移除照片，父节点自动塌缩 */
+  removeAdaptivePhoto: (photoId: string) => void;
+  /** 自适应布局：一键清空画布上的全部照片（只清画布，不删除任何文件） */
+  clearAdaptiveCanvas: () => void;
+  openFolder: (path: string) => void;
+  hideEntry: (path: string) => void;
+  setRestorePending: (pending: boolean) => void;
   addAnnotation: (kind: CollageAnnotation['type']) => void;
   updateAnnotation: (id: string, patch: Partial<CollageAnnotation>) => void;
   removeAnnotation: (id: string) => void;
@@ -103,6 +140,10 @@ export const useCollageStore = create<CollageStoreState>()(
       present: getDefaultPresentState(),
       selectedSlotIndex: null,
       selectedAnnotationId: null,
+      folderPath: null,
+      recentFolders: [],
+      removedPaths: [],
+      restorePending: false,
       commit: (updater) => {
         set((state) => {
           const previous = clonePresentState(state.present);
@@ -182,12 +223,23 @@ export const useCollageStore = create<CollageStoreState>()(
         }));
       },
       updateCanvas: (patch) => {
+        let modeChanged = false;
         get().commit((draft) => {
+          modeChanged =
+            patch.layoutMode !== undefined && patch.layoutMode !== draft.canvas.layoutMode;
           draft.canvas = {
             ...draft.canvas,
             ...patch,
           };
+          // 切换布局模式即清空自适应树：进入时从空画布手动摆（需求决定），
+          // 离开时丢弃可避免残留树的照片在 grid 模式下被自动填充误收编。
+          if (modeChanged) {
+            draft.adaptiveTree = null;
+          }
         });
+        if (modeChanged) {
+          set({ selectedSlotIndex: null, selectedAnnotationId: null });
+        }
       },
       updateExportSettings: (patch) => {
         get().commit((draft) => {
@@ -199,12 +251,18 @@ export const useCollageStore = create<CollageStoreState>()(
       },
       assignPhotoToSlot: (index, photoId) => {
         get().commit((draft) => {
-          const current = draft.slotItems[index];
+          // 同一张图在画布里只保留一份：先清掉其它槽位对该图的引用，再落入目标槽位。
+          // 否则「导入自动填充 + 手动拖放指定槽位」会短暂产生重复，且对账保留的是
+          // 先出现的自动填充位，用户指定的目标槽位反而被清掉。
+          draft.slotItems = draft.slotItems.map((item, slotIndex) =>
+            slotIndex !== index && item.photoId === photoId ? createEmptySlotState() : item,
+          );
+          const next = draft.slotItems[index];
           // 换图时重置位移/缩放/旋转：这些调整是针对旧图构图的，
           // 直接套给新图会把图推出槽位可视区；同图重复赋值则保持调整。
           draft.slotItems[index] =
-            current && current.photoId === photoId
-              ? current
+            next && next.photoId === photoId
+              ? next
               : {
                   ...createEmptySlotState(),
                   photoId,
@@ -256,7 +314,59 @@ export const useCollageStore = create<CollageStoreState>()(
                 }
               : item,
           );
+          if (draft.adaptiveTree) {
+            draft.adaptiveTree = removeAdaptivePhoto(draft.adaptiveTree, photoId);
+          }
         });
+      },
+      insertAdaptivePhoto: (targetPhotoId, direction, newPhotoId) => {
+        const tree = get().present.adaptiveTree;
+        if (tree && hasAdaptivePhoto(tree, newPhotoId)) {
+          return;
+        }
+        get().commit((draft) => {
+          // null 目标 = 画布外沿拖放：根节点分割，新照片占一整行/一列
+          draft.adaptiveTree =
+            targetPhotoId === null
+              ? insertAdaptiveRoot(draft.adaptiveTree, direction, newPhotoId)
+              : insertAdaptivePhoto(draft.adaptiveTree, targetPhotoId, direction, newPhotoId);
+        });
+      },
+      replaceAdaptivePhoto: (targetPhotoId, newPhotoId) => {
+        get().commit((draft) => {
+          draft.adaptiveTree = replaceAdaptivePhoto(draft.adaptiveTree, targetPhotoId, newPhotoId);
+        });
+      },
+      removeAdaptivePhoto: (photoId) => {
+        get().commit((draft) => {
+          draft.adaptiveTree = removeAdaptivePhoto(draft.adaptiveTree, photoId);
+        });
+      },
+      clearAdaptiveCanvas: () => {
+        get().commit((draft) => {
+          draft.adaptiveTree = null;
+        });
+      },
+      openFolder: (path) => {
+        set((state) => ({
+          folderPath: path,
+          // 换文件夹 = 换一批列表条目，「移除」隐藏集合随之失效
+          removedPaths: [],
+          recentFolders: [path, ...state.recentFolders.filter((item) => item !== path)].slice(
+            0,
+            10,
+          ),
+        }));
+      },
+      hideEntry: (path) => {
+        set((state) =>
+          state.removedPaths.includes(path)
+            ? state
+            : { removedPaths: [...state.removedPaths, path] },
+        );
+      },
+      setRestorePending: (pending) => {
+        set({ restorePending: pending });
       },
       addAnnotation: (kind) => {
         const annotation = createAnnotation(kind);
@@ -304,6 +414,8 @@ export const useCollageStore = create<CollageStoreState>()(
       name: 'copicseal-collage-state',
       partialize: (state) => ({
         present: state.present,
+        folderPath: state.folderPath,
+        recentFolders: state.recentFolders,
       }),
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<CollageStoreState> | undefined;
@@ -311,8 +423,15 @@ export const useCollageStore = create<CollageStoreState>()(
           return currentState;
         }
 
+        // 持久化的槽位引用着上次会话的直览照片（id = 文件路径）：
+        // 先挂起画布对账，等这些路径懒导入回填完成后再放行，否则会把槽位清空。
+        const hasSlotPhotos = persisted.present.slotItems?.some((item) => item.photoId) ?? false;
+        const hasAdaptivePhotos =
+          collectAdaptivePhotoIds(persisted.present.adaptiveTree ?? null).length > 0;
+
         return {
           ...currentState,
+          ...persisted,
           present: {
             ...currentState.present,
             ...persisted.present,
@@ -325,6 +444,9 @@ export const useCollageStore = create<CollageStoreState>()(
               persisted.present.annotations ?? currentState.present.annotations,
             ),
           },
+          folderPath: persisted.folderPath ?? null,
+          recentFolders: Array.isArray(persisted.recentFolders) ? persisted.recentFolders : [],
+          restorePending: hasSlotPhotos || hasAdaptivePhotos,
         };
       },
     },

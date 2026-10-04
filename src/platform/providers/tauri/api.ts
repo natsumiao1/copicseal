@@ -8,13 +8,17 @@ import type {
   AppUpdateInstallOptions,
   AppUpdateProgress,
   AppVersion,
+  BrowseThumbnailMeta,
   CacheCleanupResult,
   CachedImageMeta,
   CacheOverview,
   ComarkTemplateRecord,
+  DirectoryNode,
   ExifData,
+  FolderImageFile,
   FontInfo,
   ImageFileMeta,
+  RootDirectory,
   UpsertComarkTemplatePayload,
   WindowFrameMode,
 } from '@/platform/contracts';
@@ -25,18 +29,22 @@ export type {
   AppUpdateInstallOptions,
   AppUpdateProgress,
   AppVersion,
+  BrowseThumbnailMeta,
   CacheCleanupResult,
   CacheConfig,
   CachedImageMeta,
   CacheOverview,
   ComarkTemplateRecord,
+  DirectoryNode,
   EnabledTemplate,
   ExifData,
+  FolderImageFile,
   FontConfig,
   FontInfo,
   ImageFileMeta,
   OutputConfig,
   OutputPreset,
+  RootDirectory,
   TemplateListConfig,
   TemplatePreset,
   TemplateRegistry,
@@ -56,6 +64,25 @@ export function writeBinaryFile(path: string, contents: number[]): Promise<void>
 }
 export function listImageFilesInDirectory(path: string): Promise<string[]> {
   return invoke('list_image_files_in_directory', { path });
+}
+/** 列出目录的直接子目录（不递归、跳过隐藏目录），供文件夹树按需展开。 */
+export function listSubdirectories(path: string): Promise<DirectoryNode[]> {
+  return invoke('list_subdirectories', { path });
+}
+/** 文件夹树根节点：用户主目录 + 磁盘根。 */
+export function listRootDirectories(): Promise<RootDirectory[]> {
+  return invoke('list_root_directories');
+}
+/** 列出目录内的受支持图片（路径 + 文件名 + 大小），供文件夹直览使用。 */
+export function listFolderImages(path: string): Promise<FolderImageFile[]> {
+  return invoke('list_folder_images', { path });
+}
+/** 为直览条目按需生成缩略图（直接以原文件为源，不复制原文件）。 */
+export function ensureBrowseThumbnail(
+  path: string,
+  cacheDir: string,
+): Promise<BrowseThumbnailMeta> {
+  return invoke('ensure_browse_thumbnail', { path, cacheDir });
 }
 export function listSystemFonts(): Promise<FontInfo[]> {
   return invoke('list_system_fonts');

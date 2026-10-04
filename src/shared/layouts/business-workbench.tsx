@@ -19,7 +19,10 @@ export interface BusinessWorkbenchAssetsRenderProps {
 interface BusinessWorkbenchProps {
   header: ReactNode;
   workspace: ReactNode;
-  assets: (props: BusinessWorkbenchAssetsRenderProps) => ReactNode;
+  /** 左侧栏插槽（如拼图的文件夹树 + 图片预览栏）；不传则不渲染，也不占把手 */
+  leftRail?: ReactNode;
+  /** 底部素材条；改为左侧直览的页面不再提供，此时工作区占满高度 */
+  assets?: (props: BusinessWorkbenchAssetsRenderProps) => ReactNode;
   properties: () => ReactNode;
   assetsMinSize?: number;
   assetsResizable?: boolean;
@@ -28,6 +31,7 @@ interface BusinessWorkbenchProps {
 export function BusinessWorkbench({
   header,
   workspace,
+  leftRail,
   assets,
   properties,
   assetsMinSize = 100,
@@ -35,46 +39,71 @@ export function BusinessWorkbench({
 }: BusinessWorkbenchProps) {
   const [assetsCollapsed, setAssetsCollapsed] = useState(false);
 
+  const renderWorkspaceArea = () => {
+    if (!assets) {
+      return workspace;
+    }
+
+    const assetsProps = {
+      collapsed: assetsCollapsed,
+      toggleCollapsed: () => setAssetsCollapsed((value) => !value),
+    };
+
+    if (assetsResizable) {
+      return (
+        <ResizablePanelGroup orientation="vertical" className="h-full min-h-0 min-w-0">
+          <ResizablePanel minSize={56} className="min-h-0 min-w-0" style={PANEL_STYLE}>
+            {workspace}
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel
+            defaultSize={180}
+            minSize={assetsMinSize}
+            maxSize={300}
+            className="min-h-0 min-w-0"
+            style={PANEL_STYLE}
+          >
+            {assets(assetsProps)}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      );
+    }
+
+    return (
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+        <div className="min-h-0 min-w-0 flex-1">{workspace}</div>
+        <div
+          className={cn(
+            'shrink-0 transition-[height] duration-200',
+            assetsCollapsed ? 'h-12' : 'h-[189px]',
+          )}
+        >
+          {assets(assetsProps)}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       {header}
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 min-w-0 flex-1">
+        {leftRail != null && (
+          <>
+            <ResizablePanel
+              defaultSize={460}
+              minSize={300}
+              maxSize={720}
+              className="min-h-0 min-w-0"
+              style={PANEL_STYLE}
+            >
+              {leftRail}
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+          </>
+        )}
         <ResizablePanel minSize={64} className="min-h-0 min-w-0" style={PANEL_STYLE}>
-          {assetsResizable ? (
-            <ResizablePanelGroup orientation="vertical" className="h-full min-h-0 min-w-0">
-              <ResizablePanel minSize={56} className="min-h-0 min-w-0" style={PANEL_STYLE}>
-                {workspace}
-              </ResizablePanel>
-              <ResizableHandle withHandle />
-              <ResizablePanel
-                defaultSize={180}
-                minSize={assetsMinSize}
-                maxSize={300}
-                className="min-h-0 min-w-0"
-                style={PANEL_STYLE}
-              >
-                {assets({
-                  collapsed: assetsCollapsed,
-                  toggleCollapsed: () => setAssetsCollapsed((value) => !value),
-                })}
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          ) : (
-            <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-              <div className="min-h-0 min-w-0 flex-1">{workspace}</div>
-              <div
-                className={cn(
-                  'shrink-0 transition-[height] duration-200',
-                  assetsCollapsed ? 'h-12' : 'h-[189px]',
-                )}
-              >
-                {assets({
-                  collapsed: assetsCollapsed,
-                  toggleCollapsed: () => setAssetsCollapsed((value) => !value),
-                })}
-              </div>
-            </div>
-          )}
+          {renderWorkspaceArea()}
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel

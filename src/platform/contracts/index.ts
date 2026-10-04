@@ -205,6 +205,10 @@ export interface CachedImageMeta {
   size: number;
   ext: string;
   mime_type: string;
+  /** 原图宽（像素）；解析失败为 0，前端按 3:2 兜底 */
+  width: number;
+  /** 原图高（像素）；解析失败为 0，前端按 3:2 兜底 */
+  height: number;
 }
 
 export interface CacheOverview {
@@ -223,18 +227,38 @@ export interface CacheCleanupResult {
   removed_bytes: number;
 }
 
-export interface WebFileSelection {
-  files: File[];
-  cancelled: boolean;
+/** 直览条目的缩略图信息：不复制原文件，只按需生成缩略图。 */
+export interface BrowseThumbnailMeta {
+  path: string;
+  thumbnail_path: string;
+  thumbnail_ready: boolean;
+}
+
+/** 文件夹树节点（仅直接子目录，不递归）。 */
+export interface DirectoryNode {
+  name: string;
+  path: string;
+}
+
+/** 文件夹树根节点；`kind` 为 `home` 或 `volume`。 */
+export interface RootDirectory {
+  label: string;
+  path: string;
+  kind: string;
+}
+
+/** 直览目录内的图片条目（不复制原文件）。 */
+export interface FolderImageFile {
+  path: string;
+  name: string;
+  size: number;
+  /** 原图宽（像素）；读取失败时为 0，前端按 1:1 兜底 */
+  width: number;
+  /** 原图高（像素）；读取失败时为 0，前端按 1:1 兜底 */
+  height: number;
 }
 
 export type WindowFrameMode = 'native' | 'frameless';
-
-export interface WebFileProvider {
-  pickImages(): Promise<WebFileSelection>;
-  save(data: Blob | Uint8Array, fileName: string): Promise<void>;
-  toUrl(file: Blob | File): string;
-}
 
 export * from './platform';
 export * from './services';

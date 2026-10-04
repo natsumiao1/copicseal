@@ -1,5 +1,14 @@
 import { ImagePlus } from 'lucide-react';
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import {
+  collectAdaptivePhotoIds,
+  FALLBACK_PHOTO_RATIO,
+  getAdaptiveRootRatio,
+  photoRatio,
+  pruneAdaptiveTree,
+} from '@/features/collage/adaptive';
+import { CollageAdaptiveLayout } from '@/features/collage/components/collage-adaptive-layout';
+import { useCollagePhotoImport } from '@/features/collage/hooks/use-collage-photo-import';
 import { COLLAGE_LAYOUTS } from '@/features/collage/layouts';
 import {
   createEmptySlotState,
@@ -17,7 +26,9 @@ export function CollageCanvas({
   previewRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const { photos, currentPhoto } = usePhotos();
-  const { present, selectedSlotIndex, selectSlot, assignPhotoToSlot, commit } = useCollageStore();
+  const { ensureByPath } = useCollagePhotoImport();
+  const { present, selectedSlotIndex, restorePending, selectSlot, assignPhotoToSlot, commit } =
+    useCollageStore();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const viewportSize = useElementSize(viewportRef);
 
@@ -25,7 +36,30 @@ export function CollageCanvas({
     () => COLLAGE_LAYOUTS.find((item) => item.id === present.layoutId) ?? COLLAGE_LAYOUTS[0],
     [present.layoutId],
   );
-  const ratioValue = getAspectRatioValue(present.canvas);
+  const isAdaptive = present.canvas.layoutMode === 'adaptive';
+  const photoById = useMemo(() => new Map(photos.map((photo) => [photo.id, photo])), [photos]);
+  const resolvePhotoRatio = useCallback(
+    (photoId: string) => {
+      const photo = photoById.get(photoId);
+      return photo ? photoRatio(photo) : FALLBACK_PHOTO_RATIO;
+    },
+    [photoById],
+  );
+  // 自适应模式：画布比例跟随内容 = 根节点比例；其余模式沿用画布比例设置
+  const adaptiveRatio = useMemo(
+    () => (isAdaptive ? getAdaptiveRootRatio(present.adaptiveTree, resolvePhotoRatio) : 1),
+    [isAdaptive, present.adaptiveTree, resolvePhotoRatio],
+  );
+  const ratioValue = isAdaptive ? adaptiveRatio : getAspectRatioValue(present.canvas);
+  /**
+   * 「边距」按画布比例分配到两条轴：长边 = 滑杆值，短边 = 滑杆值 × 短/长。
+   * 四边同值的均匀 px 边距会把内容框推离画布比例，格子按百分比铺满内容框后
+   * 比例被整体压偏，`object-cover` 只能裁掉照片内容来填满（出现「挤压」观感）。
+   * 按比例分配后内容框比例恒等于画布比例，任何边距下照片都零裁切零变形。
+   */
+  const contentPadding = `${present.canvas.padding * Math.min(1, 1 / ratioValue)}px ${
+    present.canvas.padding * Math.min(1, ratioValue)
+  }px`;
   const frameWidth = useMemo(() => {
     const availableWidth = Math.max(viewportSize.width - 48, 280);
     const availableHeight = Math.max(viewportSize.height - 48, 280);
@@ -35,6 +69,24 @@ export function CollageCanvas({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: present.layoutId 用于触发时机而非回调体——切换布局后 normalizeSlots 会补出空槽位，photos 未变时需要重跑一次自动填充
   useEffect(() => {
+    // 重启恢复期间挂起对账：slotItems 持久化引用着上次会话的直览照片（id = 文件路径），
+    // 等这些路径懒导入回填（或确认失效）后再放行，否则会把恢复出来的槽位清空。
+    if (restorePending) {
+      return;
+    }
+
+    if (present.canvas.layoutMode === 'adaptive') {
+      // 自适应布局不自动填充：只校验树内引用，
+      // 失效的照片（未恢复成功/已从会话删除）由叶子塌缩清除。
+      const validPhotoIds = new Set(photos.map((photo) => photo.id));
+      commit((draft) => {
+        draft.adaptiveTree = pruneAdaptiveTree(draft.adaptiveTree, (photoId) =>
+          validPhotoIds.has(photoId),
+        );
+      });
+      return;
+    }
+
     if (present.canvas.layoutMode === 'free') {
       commit((draft) => {
         draft.slotItems = photos.map((photo, index) => {
@@ -85,7 +137,7 @@ export function CollageCanvas({
         };
       });
     });
-  }, [commit, photos, present.layoutId, present.canvas.layoutMode]);
+  }, [commit, photos, present.layoutId, present.canvas.layoutMode, restorePending]);
 
   const freeLayoutItems = useMemo(
     () =>
@@ -103,7 +155,9 @@ export function CollageCanvas({
         <ImagePlus className="size-14 text-primary" />
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">拼图预览</h1>
-          <p className="mt-2 text-sm leading-6">导入图片后，这里会显示真实拼图预览结果。</p>
+          <p className="mt-2 text-sm leading-6">
+            从左侧文件夹选择图片，这里会显示真实拼图预览结果。
+          </p>
         </div>
       </div>
     );
@@ -113,17 +167,24 @@ export function CollageCanvas({
     <div className="flex h-full w-full flex-col">
       <div className="flex items-center justify-between border-b border-border/80 px-4 py-3 text-xs text-muted-foreground">
         <span>
-          当前布局 {present.canvas.layoutMode === 'free' ? '自由布局' : layout.name} ·{' '}
-          {present.canvas.layoutMode === 'free' ? `${photos.length} 张图` : `${layout.count} 格`}
+          当前布局{' '}
+          {isAdaptive ? '自适应' : present.canvas.layoutMode === 'free' ? '自由布局' : layout.name}{' '}
+          ·{' '}
+          {isAdaptive
+            ? `${collectAdaptivePhotoIds(present.adaptiveTree).length} 张图`
+            : present.canvas.layoutMode === 'free'
+              ? `${photos.length} 张图`
+              : `${layout.count} 格`}
         </span>
-        <span>画布比例 {getAspectRatioText(present.canvas)}</span>
+        <span>画布比例 {isAdaptive ? '跟随内容' : getAspectRatioText(present.canvas)}</span>
       </div>
 
       <div ref={viewportRef} className="flex min-h-0 flex-1 items-center justify-center p-4">
+        {/* 画布直接贴着描边，不设固定装裱白边：「边距」滑杆即可把外圈留白真正调到 0 */}
         <div
-          className="border border-border/80 bg-white/80 p-4 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.32)]"
+          className="border border-border/80 bg-white/80 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.32)]"
           style={{
-            width: `${frameWidth + 32}px`,
+            width: `${frameWidth}px`,
             maxWidth: '100%',
           }}
         >
@@ -140,7 +201,9 @@ export function CollageCanvas({
               backgroundSize: 'cover',
             }}
           >
-            {present.canvas.layoutMode === 'free' ? (
+            {isAdaptive ? (
+              <CollageAdaptiveLayout photoById={photoById} contentPadding={contentPadding} />
+            ) : present.canvas.layoutMode === 'free' ? (
               <div
                 className="absolute inset-0 overflow-hidden"
                 style={{ padding: present.canvas.padding }}
@@ -219,7 +282,7 @@ export function CollageCanvas({
                   gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
                   gridTemplateRows: 'repeat(12, minmax(0, 1fr))',
                   gap: present.canvas.gap,
-                  padding: present.canvas.padding,
+                  padding: contentPadding,
                 }}
               >
                 {/* 以 layout.slots 为循环源：slotItems 是可持久化的用户状态，长度可能
@@ -277,7 +340,14 @@ export function CollageCanvas({
                           event.dataTransfer.getData('text/copicseal-photo-id') ||
                           event.dataTransfer.getData('text/plain');
                         if (photoId) {
-                          assignPhotoToSlot(index, photoId);
+                          if (photos.some((item) => item.id === photoId)) {
+                            assignPhotoToSlot(index, photoId);
+                          } else {
+                            // 直览条目：先懒导入进会话再落槽，否则对账会把未入会话的引用清掉
+                            void ensureByPath(photoId).then(() => {
+                              assignPhotoToSlot(index, photoId);
+                            });
+                          }
                         }
                         selectSlot(index);
                       }}

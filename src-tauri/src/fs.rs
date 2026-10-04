@@ -64,6 +64,10 @@ pub struct CachedImageMeta {
     pub size: u64,
     pub ext: String,
     pub mime_type: String,
+    /// 原图宽（像素）；解析失败为 0，前端按 3:2 兜底
+    pub width: u32,
+    /// 原图高（像素）；解析失败为 0，前端按 3:2 兜底
+    pub height: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,10 +88,21 @@ pub struct CacheCleanupResult {
     pub removed_bytes: u64,
 }
 
+/// 缩略图适配模式。
+///
+/// 导入管线的素材条缩略图沿用方形裁剪（Cover）；文件夹直览的缩略图
+/// 必须保留原图比例（Contain），由前端按原始宽高定尺寸展示。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThumbFit {
+    Cover,
+    Contain,
+}
+
 #[derive(Debug)]
 struct ThumbnailTask {
     source_path: PathBuf,
     thumbnail_path: PathBuf,
+    fit: ThumbFit,
 }
 
 pub struct ThumbnailTaskScheduler {
@@ -106,11 +121,17 @@ impl ThumbnailTaskScheduler {
         Self { sender }
     }
 
-    fn schedule(&self, source_path: PathBuf, thumbnail_path: PathBuf) -> Result<(), String> {
+    fn schedule(
+        &self,
+        source_path: PathBuf,
+        thumbnail_path: PathBuf,
+        fit: ThumbFit,
+    ) -> Result<(), String> {
         self.sender
             .send(ThumbnailTask {
                 source_path,
                 thumbnail_path,
+                fit,
             })
             .map_err(|error| format!("failed to enqueue thumbnail task: {error}"))
     }
@@ -342,6 +363,410 @@ pub async fn list_image_files_in_directory(path: String) -> Result<Vec<String>, 
     Ok(paths)
 }
 
+/// 直览条目的缩略图信息。
+///
+/// 打开文件夹只枚举路径，直览条目不复制原文件；`thumbnail_path` 指向按需生成的缩略图。
+#[derive(Debug, Serialize)]
+pub struct BrowseThumbnailMeta {
+    pub path: String,
+    pub thumbnail_path: String,
+    pub thumbnail_ready: bool,
+}
+
+/// 文件夹树节点（仅目录，不递归）。
+#[derive(Debug, Serialize)]
+pub struct DirectoryNode {
+    pub name: String,
+    pub path: String,
+}
+
+/// 文件夹树根节点。
+///
+/// `kind` 为 `home`（用户主目录）或 `volume`（磁盘根）；
+/// 「最近使用的文件夹」由前端持久化维护，不在此返回。
+#[derive(Debug, Serialize)]
+pub struct RootDirectory {
+    pub label: String,
+    pub path: String,
+    pub kind: String,
+}
+
+/// 直览缩略图的缓存键：原文件路径 + 修改时间一起哈希。
+///
+/// 路径不变则跨会话稳定命中同一份缩略图；文件被改动时换键重新生成，旧的交给按龄清理回收。
+/// 用 std 的 `DefaultHasher`：算法变化最坏只会让缓存键整体失效重新生成，不影响正确性。
+fn browse_cache_key(source: &Path) -> Result<String, String> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let metadata = fs::metadata(source).map_err(|e| format!("读取文件元数据失败: {e}"))?;
+    let mtime = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|duration| (duration.as_secs(), duration.subsec_nanos()));
+
+    let mut hasher = DefaultHasher::new();
+    source.to_string_lossy().hash(&mut hasher);
+    mtime.hash(&mut hasher);
+    // 版本盐：直览缩略图从方形裁剪改为等比缩放（Contain），旧缓存整体作废，按龄清理回收
+    "browse-contain-v1".hash(&mut hasher);
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
+/// 为直览列表按需生成缩略图：直接以原文件为源，不复制原文件。
+///
+/// HEIC/HIF 先经 sips / WIC 转成 JPEG 中转文件（按同一缓存键命名，可跨调用复用），
+/// 其余格式直接交给缩略图 worker。缩略图已存在时立即返回就绪，不重复排队。
+#[tauri::command]
+pub async fn ensure_browse_thumbnail(
+    path: String,
+    cache_dir: String,
+    scheduler: State<'_, ThumbnailTaskScheduler>,
+) -> Result<BrowseThumbnailMeta, String> {
+    let source = Path::new(&path);
+    if !source.exists() {
+        return Err(format!("文件不存在: {}", source.display()));
+    }
+
+    if !is_supported_image(source) {
+        return Err(format!("不支持的图片格式: {}", source.display()));
+    }
+
+    let root = Path::new(&cache_dir);
+    ensure_cache_layout(root)?;
+
+    let ext = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let key = browse_cache_key(source)?;
+    let thumbnail_path = root.join(THUMBNAIL_DIR_NAME).join(format!("{key}.jpg"));
+
+    if thumbnail_path.exists() {
+        return Ok(BrowseThumbnailMeta {
+            path,
+            thumbnail_path: thumbnail_path.to_string_lossy().to_string(),
+            thumbnail_ready: true,
+        });
+    }
+
+    let worker_source = if matches!(ext.as_str(), "heic" | "heif" | "hif") {
+        let bridge = root.join(PREVIEW_DIR_NAME).join(format!("{key}-src.jpg"));
+        convert_heic_to_jpeg_path(source, &bridge)?;
+        bridge
+    } else {
+        source.to_path_buf()
+    };
+
+    scheduler.schedule(worker_source, thumbnail_path.clone(), ThumbFit::Contain)?;
+
+    Ok(BrowseThumbnailMeta {
+        path,
+        thumbnail_path: thumbnail_path.to_string_lossy().to_string(),
+        thumbnail_ready: false,
+    })
+}
+
+/// 列出目录的直接子目录：不递归，跳过隐藏目录，按名称排序。供文件夹树按需展开。
+#[tauri::command]
+pub async fn list_subdirectories(path: String) -> Result<Vec<DirectoryNode>, String> {
+    let dir = Path::new(&path);
+
+    if !dir.exists() {
+        return Err(format!("目录不存在: {}", dir.display()));
+    }
+
+    if !dir.is_dir() {
+        return Err(format!("不是目录: {}", dir.display()));
+    }
+
+    let entries = fs::read_dir(dir).map_err(|e| format!("读取目录失败: {e}"))?;
+    let mut nodes = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取目录项失败: {e}"))?;
+        if !entry.path().is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().to_string();
+        // 隐藏目录（.git、.Trash 等）对文件夹树没有意义
+        if name.starts_with('.') {
+            continue;
+        }
+
+        nodes.push(DirectoryNode {
+            path: entry.path().to_string_lossy().to_string(),
+            name,
+        });
+    }
+
+    nodes.sort_by_key(|node| node.name.to_lowercase());
+    Ok(nodes)
+}
+
+/// 直览文件内的图片条目：路径 + 文件名 + 大小 + 原始宽高。
+///
+/// `width`/`height` 供前端按原图比例定尺寸；读取失败时为 0，前端按 1:1 兜底。
+#[derive(Debug, Serialize)]
+pub struct FolderImageFile {
+    pub path: String,
+    pub name: String,
+    pub size: u64,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// 列出目录内的受支持图片（不复制原文件），供文件夹直览的图片预览栏使用。
+///
+/// 与 `list_image_files_in_directory` 的区别：额外返回文件大小，且跳过隐藏文件。
+#[tauri::command]
+pub async fn list_folder_images(path: String) -> Result<Vec<FolderImageFile>, String> {
+    let dir = Path::new(&path);
+
+    if !dir.exists() {
+        return Err(format!("目录不存在: {}", dir.display()));
+    }
+
+    if !dir.is_dir() {
+        return Err(format!("不是目录: {}", dir.display()));
+    }
+
+    let entries = fs::read_dir(dir).map_err(|e| format!("读取目录失败: {e}"))?;
+    let mut images = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取目录项失败: {e}"))?;
+        let entry_path = entry.path();
+        if !entry_path.is_file() || !is_supported_image(&entry_path) {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().to_string();
+        // 隐藏文件（.DS_Store 之外也可能有 .xxx.jpg）在 Finder 里不可见，直览保持一致
+        if name.starts_with('.') {
+            continue;
+        }
+
+        let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+        let (width, height) = read_image_dimensions(&entry_path).unwrap_or((0, 0));
+        images.push(FolderImageFile {
+            path: entry_path.to_string_lossy().to_string(),
+            name,
+            size,
+            width,
+            height,
+        });
+    }
+
+    images.sort_by_key(|image| image.name.to_lowercase());
+    Ok(images)
+}
+
+/// 读取图片宽高（只读文件头，不解码像素）。
+///
+/// 标准格式走 `image` crate 的头部解析；HEIC/HIF/AVIF 这类 HEIF 容器
+/// `image` crate 不支持，改为解析容器里的 `ispe` 空间属性（HEIF 必需属性）。
+fn read_image_dimensions(path: &Path) -> Option<(u32, u32)> {
+    if let Ok((width, height)) = image::image_dimensions(path) {
+        if width > 0 && height > 0 {
+            return Some((width, height));
+        }
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if matches!(ext.as_str(), "heic" | "heif" | "hif" | "avif") {
+        return read_heif_ispe_dimensions(path);
+    }
+
+    None
+}
+
+/// 读取 HEIF 容器中 `ispe` 属性的宽高（取面积最大者，多为原始图而非缩略项）。
+///
+/// 盒子结构：顶层 `meta`(FullBox) → `iprp` → `ipco` → `ispe`(FullBox + width + height)。
+fn read_heif_ispe_dimensions(path: &Path) -> Option<(u32, u32)> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = File::open(path).ok()?;
+    let file_len = file.metadata().ok()?.len();
+
+    // 顶层盒子遍历，定位 meta 的负载范围
+    let mut offset = 0u64;
+    let meta_start = loop {
+        if offset + 8 > file_len {
+            return None;
+        }
+        file.seek(SeekFrom::Start(offset)).ok()?;
+        let mut header = [0u8; 8];
+        file.read_exact(&mut header).ok()?;
+        let size = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as u64;
+        let kind = [header[4], header[5], header[6], header[7]];
+
+        let (box_size, header_len) = if size == 1 {
+            let mut large = [0u8; 8];
+            file.read_exact(&mut large).ok()?;
+            (u64::from_be_bytes(large), 16u64)
+        } else if size == 0 {
+            (file_len - offset, 8u64)
+        } else {
+            (size, 8u64)
+        };
+
+        if box_size < header_len {
+            return None;
+        }
+        if &kind == b"meta" {
+            break offset + header_len;
+        }
+        offset += box_size;
+    };
+
+    // meta 负载 = FullBox 版本/flags(4) + 子盒子；异常大的 meta 直接放弃，避免无谓分配
+    let meta_payload_start = meta_start.checked_add(4)?;
+    if meta_payload_start >= file_len {
+        return None;
+    }
+    let meta_len = (file_len - meta_payload_start).min(32 * 1024 * 1024) as usize;
+    let mut buffer = vec![0u8; meta_len];
+    file.seek(SeekFrom::Start(meta_payload_start)).ok()?;
+    file.read_exact(&mut buffer).ok()?;
+
+    find_ispe_box(&buffer, 0)
+}
+
+/// 在盒子序列中查找 `ispe`；遇 `iprp`/`ipco` 递归下钻，取面积最大的结果。
+fn find_ispe_box(buffer: &[u8], depth: usize) -> Option<(u32, u32)> {
+    if depth > 4 {
+        return None;
+    }
+
+    let mut best: Option<(u64, (u32, u32))> = None;
+    let mut offset = 0usize;
+
+    while offset + 8 <= buffer.len() {
+        let size = u32::from_be_bytes([
+            buffer[offset],
+            buffer[offset + 1],
+            buffer[offset + 2],
+            buffer[offset + 3],
+        ]) as usize;
+        let kind = &buffer[offset + 4..offset + 8];
+
+        let (box_size, header_len) = if size == 1 {
+            if offset + 16 > buffer.len() {
+                break;
+            }
+            let large = u64::from_be_bytes(
+                buffer[offset + 8..offset + 16]
+                    .try_into()
+                    .map_err(|_| ())
+                    .ok()?,
+            ) as usize;
+            (large, 16usize)
+        } else if size == 0 {
+            (buffer.len() - offset, 8usize)
+        } else {
+            (size, 8usize)
+        };
+
+        if box_size < header_len || offset + box_size > buffer.len() {
+            break;
+        }
+        let payload = &buffer[offset + header_len..offset + box_size];
+
+        match kind {
+            b"ispe" => {
+                // FullBox: version/flags(4) + width(4) + height(4)
+                if payload.len() >= 12 {
+                    let width = u32::from_be_bytes(payload[4..8].try_into().ok()?);
+                    let height = u32::from_be_bytes(payload[8..12].try_into().ok()?);
+                    if width > 0 && height > 0 {
+                        let area = width as u64 * height as u64;
+                        if best.is_none_or(|(best_area, _)| area > best_area) {
+                            best = Some((area, (width, height)));
+                        }
+                    }
+                }
+            }
+            b"iprp" | b"ipco" => {
+                if let Some(found) = find_ispe_box(payload, depth + 1) {
+                    let area = found.0 as u64 * found.1 as u64;
+                    if best.is_none_or(|(best_area, _)| area > best_area) {
+                        best = Some((area, found));
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        offset += box_size;
+    }
+
+    best.map(|(_, dimensions)| dimensions)
+}
+
+/// 文件夹树的固定根节点：用户主目录 + 磁盘根。
+#[tauri::command]
+pub async fn list_root_directories() -> Result<Vec<RootDirectory>, String> {
+    let mut roots = Vec::new();
+
+    if let Some(home) = dirs::home_dir() {
+        let label = home
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| home.to_string_lossy().to_string());
+        roots.push(RootDirectory {
+            label,
+            path: home.to_string_lossy().to_string(),
+            kind: "home".to_string(),
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // 系统卷挂在 /，不进 /Volumes；通过主目录已经可达，这里只补充外接卷
+        if let Ok(entries) = fs::read_dir("/Volumes") {
+            for entry in entries.flatten() {
+                if !entry.path().is_dir() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+                roots.push(RootDirectory {
+                    label: name,
+                    path: entry.path().to_string_lossy().to_string(),
+                    kind: "volume".to_string(),
+                });
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        for letter in 'A'..='Z' {
+            let path = format!("{letter}:\\");
+            if Path::new(&path).exists() {
+                roots.push(RootDirectory {
+                    label: format!("{letter}:"),
+                    path,
+                    kind: "volume".to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(roots)
+}
+
 fn import_bytes_to_cache_impl(
     original_name: &str,
     contents: Vec<u8>,
@@ -382,6 +807,7 @@ fn import_bytes_to_cache_impl(
     scheduler.schedule(
         thumbnail_source.to_path_buf(),
         cache_paths.thumbnail_path.clone(),
+        ThumbFit::Cover,
     )?;
     println!(
         "[thumbnail][import] schedule thumbnail source={} target={} elapsed_ms={} total_elapsed_ms={}",
@@ -390,6 +816,9 @@ fn import_bytes_to_cache_impl(
         0,
         started_at.elapsed().as_millis()
     );
+
+    // 自适应布局需要照片原始宽高：缓存文件即原文件字节（含 HEIC），头部解析开销可忽略
+    let (width, height) = read_image_dimensions(&cache_paths.image_path).unwrap_or((0, 0));
 
     Ok(CachedImageMeta {
         name: original_name.to_string(),
@@ -401,6 +830,8 @@ fn import_bytes_to_cache_impl(
         size: contents.len() as u64,
         ext: ext.clone(),
         mime_type: mime_type_for_ext(&ext).to_string(),
+        width,
+        height,
     })
 }
 
@@ -585,38 +1016,46 @@ fn create_preview_asset(
     }
 }
 
-fn create_thumbnail_asset(source_path: &Path, thumbnail_path: &Path) -> Result<(), String> {
+fn create_thumbnail_asset(
+    source_path: &Path,
+    thumbnail_path: &Path,
+    fit: ThumbFit,
+) -> Result<(), String> {
     let started_at = Instant::now();
-    #[cfg(target_os = "macos")]
-    if try_create_thumbnail_with_sips(source_path, thumbnail_path).is_ok() {
-        println!(
-            "[thumbnail][worker] native macos sips source={} target={} elapsed_ms={}",
-            source_path.display(),
-            thumbnail_path.display(),
-            started_at.elapsed().as_millis()
-        );
-        return Ok(());
-    }
 
-    #[cfg(target_os = "windows")]
-    if let Ok(thumbnail) = try_create_thumbnail_with_wic(source_path) {
-        let write_started_at = Instant::now();
-        let result = write_thumbnail_jpeg(&thumbnail, thumbnail_path);
-        println!(
-            "[thumbnail][worker] native windows wic source={} target={} write_elapsed_ms={} total_elapsed_ms={}",
-            source_path.display(),
-            thumbnail_path.display(),
-            write_started_at.elapsed().as_millis(),
-            started_at.elapsed().as_millis()
-        );
-        return result;
+    // 原生加速通道只服务方形裁剪（导入管线）；等比模式必须走通用解码，避免任何裁切
+    if fit == ThumbFit::Cover {
+        #[cfg(target_os = "macos")]
+        if try_create_thumbnail_with_sips(source_path, thumbnail_path).is_ok() {
+            println!(
+                "[thumbnail][worker] native macos sips source={} target={} elapsed_ms={}",
+                source_path.display(),
+                thumbnail_path.display(),
+                started_at.elapsed().as_millis()
+            );
+            return Ok(());
+        }
+
+        #[cfg(target_os = "windows")]
+        if let Ok(thumbnail) = try_create_thumbnail_with_wic(source_path) {
+            let write_started_at = Instant::now();
+            let result = write_thumbnail_jpeg(&thumbnail, thumbnail_path);
+            println!(
+                "[thumbnail][worker] native windows wic source={} target={} write_elapsed_ms={} total_elapsed_ms={}",
+                source_path.display(),
+                thumbnail_path.display(),
+                write_started_at.elapsed().as_millis(),
+                started_at.elapsed().as_millis()
+            );
+            return result;
+        }
     }
 
     let decode_resize_started_at = Instant::now();
     let thumbnail = if is_jpeg_image(source_path) {
-        create_thumbnail_from_jpeg(source_path)?
+        create_thumbnail_from_jpeg(source_path, fit)?
     } else {
-        create_thumbnail_from_dynamic_image(source_path)?
+        create_thumbnail_from_dynamic_image(source_path, fit)?
     };
     println!(
         "[thumbnail][worker] fallback decode+resize source={} elapsed_ms={}",
@@ -644,7 +1083,10 @@ fn write_thumbnail_jpeg(thumbnail: &image::RgbImage, thumbnail_path: &Path) -> R
         .map_err(|e| format!("写入 JPEG 缩略图失败: {e}"))
 }
 
-fn create_thumbnail_from_jpeg(source_path: &Path) -> Result<image::RgbImage, String> {
+fn create_thumbnail_from_jpeg(
+    source_path: &Path,
+    fit: ThumbFit,
+) -> Result<image::RgbImage, String> {
     let input = fs::read(source_path).map_err(|e| format!("读取 JPEG 缩略图源文件失败: {e}"))?;
     let options = DecoderOptions::new_fast().jpeg_set_out_colorspace(ColorSpace::RGB);
     let mut decoder = ZuneJpegDecoder::new_with_options(ZCursor::new(input.as_slice()), options);
@@ -655,10 +1097,13 @@ fn create_thumbnail_from_jpeg(source_path: &Path) -> Result<image::RgbImage, Str
         .dimensions()
         .ok_or_else(|| "JPEG 缩略图尺寸解析失败".to_string())?;
 
-    resize_rgb8_thumbnail(width as u32, height as u32, decoded)
+    resize_rgb8_thumbnail(width as u32, height as u32, decoded, fit)
 }
 
-fn create_thumbnail_from_dynamic_image(source_path: &Path) -> Result<image::RgbImage, String> {
+fn create_thumbnail_from_dynamic_image(
+    source_path: &Path,
+    fit: ThumbFit,
+) -> Result<image::RgbImage, String> {
     let image = ImageReader::open(source_path)
         .map_err(|e| format!("打开缩略图源文件失败: {e}"))?
         .with_guessed_format()
@@ -668,22 +1113,40 @@ fn create_thumbnail_from_dynamic_image(source_path: &Path) -> Result<image::RgbI
     let rgb = image.to_rgb8();
     let (width, height) = rgb.dimensions();
 
-    resize_rgb8_thumbnail(width, height, rgb.into_raw())
+    resize_rgb8_thumbnail(width, height, rgb.into_raw(), fit)
 }
 
 fn resize_rgb8_thumbnail(
     width: u32,
     height: u32,
     pixels: Vec<u8>,
+    fit: ThumbFit,
 ) -> Result<image::RgbImage, String> {
     let src_image = FirImage::from_vec_u8(width, height, pixels, fr::PixelType::U8x3)
         .map_err(|e| format!("创建缩略图源缓冲区失败: {e}"))?;
+    let mut resizer = fr::Resizer::new();
+
+    if fit == ThumbFit::Contain {
+        // 等比缩放进 THUMBNAIL_SIZE：目标框与源同比例，直接拉伸即无变形、无裁切
+        let scale = (THUMBNAIL_SIZE as f32 / (width.max(1) as f32))
+            .min(THUMBNAIL_SIZE as f32 / (height.max(1) as f32))
+            .min(1.0);
+        let target_width = ((width as f32 * scale).round() as u32).max(1);
+        let target_height = ((height as f32 * scale).round() as u32).max(1);
+        let mut dst_image = FirImage::new(target_width, target_height, fr::PixelType::U8x3);
+        let resize_options = fr::ResizeOptions::new()
+            .resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+        resizer
+            .resize(&src_image, &mut dst_image, Some(&resize_options))
+            .map_err(|e| format!("缩略图缩放失败: {e}"))?;
+        return image::RgbImage::from_raw(target_width, target_height, dst_image.into_vec())
+            .ok_or_else(|| "创建缩略图输出缓冲区失败".to_string());
+    }
+
     let mut dst_image = FirImage::new(THUMBNAIL_SIZE, THUMBNAIL_SIZE, fr::PixelType::U8x3);
     let resize_options = fr::ResizeOptions::new()
         .resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Hamming))
         .fit_into_destination(Some((0.5, 0.5)));
-    let mut resizer = fr::Resizer::new();
-
     resizer
         .resize(&src_image, &mut dst_image, Some(&resize_options))
         .map_err(|e| format!("缩略图缩放失败: {e}"))?;
@@ -695,6 +1158,7 @@ fn resize_rgb8_thumbnail(
 fn create_thumbnail_asset_atomically(
     source_path: &Path,
     thumbnail_path: &Path,
+    fit: ThumbFit,
 ) -> Result<(), String> {
     let started_at = Instant::now();
     let temp_thumbnail_path = thumbnail_path.with_extension("part.jpg");
@@ -704,7 +1168,7 @@ fn create_thumbnail_asset_atomically(
             .map_err(|e| format!("failed to remove temporary thumbnail file: {e}"))?;
     }
 
-    create_thumbnail_asset(source_path, &temp_thumbnail_path)?;
+    create_thumbnail_asset(source_path, &temp_thumbnail_path, fit)?;
 
     fs::rename(&temp_thumbnail_path, thumbnail_path).map_err(|e| {
         format!(
@@ -739,7 +1203,7 @@ fn spawn_thumbnail_worker(index: usize, receiver: Arc<Mutex<Receiver<ThumbnailTa
             };
 
             if let Err(error) =
-                create_thumbnail_asset_atomically(&task.source_path, &task.thumbnail_path)
+                create_thumbnail_asset_atomically(&task.source_path, &task.thumbnail_path, task.fit)
             {
                 eprintln!(
                     "generate thumbnail failed for {} -> {}: {}",
