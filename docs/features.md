@@ -47,7 +47,7 @@ Template Selector → Template Registry → propsSchema → Template Runtime →
 
 ### 1.5 背景
 
-背景是框架级能力，与模板自身的参数体系相互独立：模板有没有自己的边框，都不影响它。模式为 `无背景 / 纯色背景 / 照片模糊`，字段含义见 [architecture.md](./architecture.md) §5.3。
+背景是框架级能力，与模板自身的参数体系相互独立：模板有没有自己的边框，都不影响它。模式为 `无背景 / 纯色背景 / 照片模糊`，默认照片模糊，字段含义见 [architecture.md](./architecture.md) §5.3。
 
 - 默认值由当前模板提供，用户可覆盖；切换模板时背景重置为该模板的默认值
 - 字段按模式条件显示，不相关的字段不出现在面板上

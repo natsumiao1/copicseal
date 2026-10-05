@@ -30,8 +30,8 @@ src/
 
 ### 代码结构约束
 
-- `shared/layouts` 只存放可复用布局组件，不判断当前业务页面，也不直接渲染 Template / Collage 的业务内容；通过 props 或 children 暴露 `header`、`panels`（文件夹 / 收藏夹 / 内容 / 预览区 / 调整区五块停靠面板）等插槽
-- `shared/layouts/business-workbench` 为 dockview 停靠宿主，以 `panels` 插槽承载五块面板：每块一个 tab（标题 + ✕），可换位、四向分割、拖到中心合并为同组 tab，面板间 `4px` 细缝；默认布局里收藏夹与文件夹同组（第一栏两个 tab），旧布局缺收藏夹时首载补挂一次；布局持久化并跨页共享（`shared/store/use-workbench-dock-store.ts`）
+- `shared/layouts` 只存放可复用布局组件，不判断当前业务页面，也不直接渲染 Template / Collage 的业务内容；通过 props 或 children 暴露 `header`、`panels`（文件夹 / 收藏夹 / 筛选器 / 内容 / 预览 / 调整六块停靠面板）等插槽
+- `shared/layouts/business-workbench` 为 dockview 停靠宿主，以 `panels` 插槽承载六块面板：每块一个 tab（标题 + ✕），可换位、四向分割、拖到中心合并为同组 tab，面板间 `4px` 细缝；默认布局里收藏夹与文件夹同组（第一栏上半两个 tab）、筛选器停靠文件夹栏下方，旧布局缺收藏夹 / 筛选器时首载各补挂一次，恢复布局时以 `WORKBENCH_PANELS` 统一刷新 tab 标题；布局持久化并跨页共享（`shared/store/use-workbench-dock-store.ts`）
 - `features/template` 与 `features/collage` 提供页面入口组件，引用 `shared/layouts` 组装页面，而不是由布局层反向承载页面逻辑
 - 功能选择（拼图 / 边框水印 / 设置）与「视图」菜单位于窗口顶部横条 `CoTopNav`，由 `app.tsx` 顶层挂载
 - 底部素材条机制已移除，Template 与 Collage 共用同一停靠布局与同一份素材会话（`PhotoProvider` 全局一份，挂于 `app.tsx`，`/settings` 页不激活）
@@ -62,7 +62,7 @@ await platform.export.exportSingle(node, options, sourcePath, context);
 export interface Platform {
   readonly assets: AssetServiceContract; // 导入与素材会话
   readonly export: ExportServiceContract; // 导出管线与任务
-  readonly files: FileServiceContract; // 文件、目录枚举、直览缩略图与缓存
+  readonly files: FileServiceContract; // 文件、目录枚举、标签读取、直览缩略图与缓存
   readonly storage: StorageServiceContract; // 配置与系统字体
   readonly cache: CacheServiceContract; // 前端内存缓存
 }
@@ -99,9 +99,9 @@ adapter 门面（`FileAdapter` / `StorageAdapter` / `platform-runtime`）只增�
 
 只提供底层能力，不提供素材中心页面。
 
-**提供**：文件导入、粘贴导入、文件夹扫描与目录枚举（子目录、图片列表、磁盘根）、缩略图生成（含以原文件为源的直览缩略图）、懒导入（图片被使用时才复制进缓存）、预览 URL 管理、最近打开的文件夹记录、文件夹收藏（文件夹 + 收藏夹 + 内容三块停靠面板）、全局素材会话（应用内唯一一份照片列表）、缓存管理。
+**提供**：文件导入、粘贴导入、文件夹扫描与目录枚举（子目录、图片列表、计算机根节点：用户磁盘 / 系统卷 / 其他磁盘）、缩略图生成（含以原文件为源的直览缩略图）、懒导入（图片被使用时才复制进缓存）、预览 URL 管理、文件来源四块停靠面板（文件夹 / 收藏夹 / 筛选器 / 内容）与文件夹收藏、图片标签只读读取（XMP 星级 / 颜色标签，供筛选器过滤）、全局素材会话（应用内唯一一份照片列表）、缓存管理。
 
-**不提供**：素材库页面（标签、评级、归档、项目化管理）、项目级素材归档。
+**不提供**：素材库页面（归档、项目化管理）、标签 / 星级的写入与打标 UI、项目级素材归档。标签与星级只作为筛选条件只读存在。
 
 ### 3.1 文件系统与缓存
 
@@ -110,11 +110,12 @@ adapter 门面（`FileAdapter` / `StorageAdapter` / `platform-runtime`）只增�
 | 选择目录 | 平台层保留系统目录选择器能力；产品界面不提供入口，选目录走文件夹树导航 |
 | 打开文件 | 使用系统默认程序打开；打开文件夹用于打开导出目录 |
 | 目录枚举 | 列出子目录与图片文件路径，供文件夹树与内容面板使用，不复制原文件 |
+| 计算机根节点 | 返回用户磁盘（用户主目录）+ 系统卷 + 其他磁盘，前端统一挂在「计算机」下 |
+| 图片标签 | 只读提取 XMP 的星级（`xmp:Rating` 1-5）与颜色标签（`xmp:Label` 五色），优先 `.xmp` sidecar，供筛选器过滤；不写回文件 |
 | 直览缩略图 | 直接以原文件为源生成缩略图，按原路径 + mtime 哈希写入缓存 |
 | 缩略图缓存 | 为内容面板提供快速展示 |
 | 预览资源缓存 | 降低重复读取成本 |
 | 主题色缓存 | 按图片缓存提取出的主题色，避免重复采样 |
-| 最近文件夹 | 记录最近打开的目录，供文件夹树与会话恢复使用 |
 
 通过 Tauri 访问用户明确授权的本地路径；导出直接写入目标目录，不提供浏览器下载降级。
 
@@ -126,7 +127,7 @@ SQLite 存储轻量配置与索引：General 设置、Template / Collage / Expor
 
 ## 4. 持久化策略
 
-**持久化**：Settings 默认配置、模板收藏、模板最近使用、全局文件来源状态（当前文件夹、最近文件夹、收藏文件夹）与五块面板的停靠布局、缓存索引。
+**持久化**：Settings 默认配置、模板收藏、模板最近使用、全局文件来源状态（当前文件夹、收藏文件夹）、筛选条件（星级 / 标签 / 长宽比 / 文件类型）与筛选器条件区折叠状态、六块面板的停靠布局、缓存索引。
 
 **不持久化为项目**：Template 会话编辑状态、Collage 会话编辑状态、全局工作区快照。
 
@@ -211,7 +212,7 @@ SQLite 存储轻量配置与索引：General 设置、Template / Collage / Expor
 
 #### backgroundDefaults（模板背景默认值）
 
-背景是框架级能力，模板只负责给出自己认为最佳的默认值，用户可在属性面板覆盖：
+背景是框架级能力，模板只负责给出自己认为最佳的默认值，用户可在属性面板覆盖；当前字段兜底与全部模板的默认模式统一为 `image`（照片模糊）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -243,24 +244,40 @@ SQLite 存储轻量配置与索引：General 设置、Template / Collage / Expor
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | folderPath | string \| null | 当前直览文件夹；持久化，`null` 表示未打开 |
-| recentFolders | string[] | 最近打开的文件夹（新→旧，最多 10 条）；持久化 |
 | favoriteFolders | string[] | 收藏的文件夹（新→旧，按路径去重，只收藏文件夹）；持久化，供收藏夹面板展示 |
 | removedPaths | string[] | 本次会话从列表隐藏的路径；不持久化，换文件夹即清空 |
+| entries / entriesStatus | FolderImageFile[] / 枚举态 | 当前目录的图片条目与枚举进度；内容面板与筛选器的共同数据源，不持久化 |
 
 - 落地为 `shared/store/use-file-source-store.ts`（键 `copicseal-file-source-state`），由两个功能页共用；持久化载荷只挑已知字段合并，历史遗留字段读取时丢弃
+
+筛选条件状态：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| ratings | number[] | 选中的星级（1-5）；持久化 |
+| labels | ColorLabel[] | 选中的颜色标签（red / yellow / green / blue / purple）；持久化 |
+| ratios | string[] | 选中的长宽比（最简比，如 `3:2`）；持久化 |
+| types | string[] | 选中的文件扩展名（小写、无点）；持久化 |
+| tags / tagsStatus / tagsFolder | Record\<string, ImageTags\> / 枚举态 / string \| null | 按目录批量读取的 XMP 标签与进度；不持久化，目录就绪即加载（供星级 / 标签的数量与条件使用） |
+| collapsedSections | FilterSectionKey[] | 已折叠的条件区（rating / label / ratio / type）；持久化 |
+
+- 落地为 `shared/store/use-filter-store.ts`（键 `copicseal-filter-state`）；筛选与命中共用 `shared/lib/image-filter.ts` 的 `resolveCriteria` + `matchesFilter`
+- 加载点是 `shared/hooks/use-sync-filter-tags.ts`（由 `CoFileSourceWorkbench` 挂载）：当前目录图片枚举就绪即批量读取，与筛选器面板是否显示、条件是否生效无关
 
 ### 5.5 停靠布局状态
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| layout | SerializedDockview \| null | 五块面板的布局（位置、尺寸、tab 归组、关闭状态；默认一行四栏，收藏夹与文件夹同栏两 tab）；持久化，键 `copicseal-dock-layout`，`null` 表示首次启动待构建 |
+| layout | SerializedDockview \| null | 六块面板的布局（位置、尺寸、tab 归组、关闭状态；默认顶层一行四栏 + 文件夹栏下方的筛选器，收藏夹与文件夹同栏两 tab）；持久化，键 `copicseal-dock-layout`，`null` 表示首次启动待构建 |
 | favoritesSeeded | boolean | 收藏夹 tab 是否已并入布局；持久化，旧布局首载补挂一次后置位，之后显示与否完全以布局为准 |
+| filterSeeded | boolean | 筛选器面板是否已并入布局（同 `favoritesSeeded`，补挂到文件夹栏下方）；持久化 |
 | apis | Partial\<Record\<AppRoute, DockviewApi\>\> | 各功能页工作台的 dockview 实例；不持久化，顶栏「视图」菜单按当前路由取用 |
 
 - 落地为 `shared/store/use-workbench-dock-store.ts`，两个功能页共享同一份布局
 - 本页布局变化防抖回写 `layout`，再经订阅同步到另一页（序列化字符串比对防回环）
-- 布局读取时做结构校验（面板 id / 组件名都在五块之内），损坏则回退默认一行四栏
-- 旧版本保存的布局缺收藏夹 tab 时，首载由 `ensureFavoritesPanel` 并入文件夹组一次（`favoritesSeeded` 置位）
+- 布局读取时做结构校验（面板 id / 组件名都在六块之内），损坏则回退默认布局
+- 恢复布局后按 `WORKBENCH_PANELS` 统一刷新 tab 标题，保证改名（预览区 → 预览、调整区 → 调整）对旧布局生效
+- 旧版本保存的布局缺收藏夹 tab / 筛选器面板时，首载分别由 `ensureFavoritesPanel` / `ensureFilterPanel` 补挂一次（`favoritesSeeded` / `filterSeeded` 置位）
 - 旧键 `folderCollapsed` / `contentCollapsed` 弃用，不迁移
 
 ### 5.6 Collage Session
