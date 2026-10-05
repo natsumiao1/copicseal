@@ -65,7 +65,11 @@ interface CollageLayoutPickerProps {
  */
 export function CollageLayoutPicker({ active = false }: CollageLayoutPickerProps) {
   const [open, setOpen] = useState(false);
-  const { present, setLayout, updateCanvas } = useCollageStore();
+  // 与工具栏同理：只订阅两个原始值，画布每次提交（拖动 / 滑杆）都不必重渲整个弹层
+  const layoutMode = useCollageStore((state) => state.present.canvas.layoutMode);
+  const currentLayoutId = useCollageStore((state) => state.present.layoutId);
+  const setLayout = useCollageStore((state) => state.setLayout);
+  const updateCanvas = useCollageStore((state) => state.updateCanvas);
 
   const handlePick = (layoutId: string) => {
     // 与工具栏快捷预设同一套动作：先回 grid 模式再换布局
@@ -97,8 +101,7 @@ export function CollageLayoutPicker({ active = false }: CollageLayoutPickerProps
                 <h3 className="text-xs font-semibold text-muted-foreground">{group}</h3>
                 <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
                   {layouts.map((layout) => {
-                    const selected =
-                      present.canvas.layoutMode === 'grid' && present.layoutId === layout.id;
+                    const selected = layoutMode === 'grid' && currentLayoutId === layout.id;
 
                     return (
                       <button

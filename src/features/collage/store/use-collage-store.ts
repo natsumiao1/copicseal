@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import { coalescedLocalStorage } from '@/shared/lib/coalesced-storage';
 import {
   collectAdaptivePhotoIds,
   hasAdaptivePhoto,
@@ -86,15 +87,23 @@ interface CollageStoreState {
   present: CollagePresentState;
   selectedSlotIndex: number | null;
   selectedAnnotationId: string | null;
-  /** 当前打开的直览文件夹；持久化用于会话恢复 */
-  folderPath: string | null;
-  /** 最近打开的文件夹（新→旧），供文件夹树根节点展示；持久化 */
-  recentFolders: string[];
-  /** 本次会话从直览列表「移除」的路径（仅隐藏，不删文件）；不持久化 */
-  removedPaths: string[];
   /** 重启后等待槽位照片回填期间为 true：画布对账暂停，避免清空持久化的槽位 */
   restorePending: boolean;
+  /**
+   * 连续手势（拖拽）的基线快照：手势开始时记录，结束时一次性写入历史。
+   * null 表示当前没有进行中的手势。不持久化。
+   */
+  transientBase: CollagePresentState | null;
   commit: (updater: (draft: CollagePresentState) => void) => void;
+  /** 开始一次连续手势：记录基线，之后的 `updateSlotTransient` 不进历史 */
+  beginTransient: () => void;
+  /**
+   * 手势期间的临时更新：只改 present，不入历史、不做变更比对。
+   * 供拖拽这类逐帧触发的路径使用——每一步都进历史会让撤销退化成「按像素撤销」。
+   */
+  updateSlotTransient: (index: number, patch: Partial<CollageSlotState>) => void;
+  /** 结束手势：present 相对基线确有变化时，把基线作为一步历史入栈 */
+  endTransient: () => void;
   undo: () => void;
   redo: () => void;
   selectSlot: (index: number | null) => void;
@@ -124,8 +133,6 @@ interface CollageStoreState {
   removeAdaptivePhoto: (photoId: string) => void;
   /** 自适应布局：一键清空画布上的全部照片（只清画布，不删除任何文件） */
   clearAdaptiveCanvas: () => void;
-  openFolder: (path: string) => void;
-  hideEntry: (path: string) => void;
   setRestorePending: (pending: boolean) => void;
   addAnnotation: (kind: CollageAnnotation['type']) => void;
   updateAnnotation: (id: string, patch: Partial<CollageAnnotation>) => void;
@@ -140,27 +147,70 @@ export const useCollageStore = create<CollageStoreState>()(
       present: getDefaultPresentState(),
       selectedSlotIndex: null,
       selectedAnnotationId: null,
-      folderPath: null,
-      recentFolders: [],
-      removedPaths: [],
       restorePending: false,
+      transientBase: null,
       commit: (updater) => {
         set((state) => {
-          const previous = clonePresentState(state.present);
+          // 只克隆一份作为可变草稿：上一版直接复用 `state.present`，
+          // 它在本 store 内从不被原地修改（所有写操作都先克隆再改），
+          // 既能做变更比对，也能直接进历史栈，省掉每次提交的一半深克隆。
           const next = clonePresentState(state.present);
           updater(next);
           next.slotItems = normalizeSlots(next.layoutId, next.slotItems, next.canvas.layoutMode);
           next.annotations = normalizeAnnotations(next.annotations);
 
-          if (JSON.stringify(previous) === JSON.stringify(next)) {
+          if (JSON.stringify(state.present) === JSON.stringify(next)) {
             return state;
           }
 
+          // 手势进行中：这一步与手势合并，不单独入栈——否则基线会晚于它入栈，
+          // 历史顺序被颠倒；整段改动由 endTransient 一次性记作一步。
+          if (state.transientBase !== null) {
+            return {
+              present: next,
+              future: [],
+            };
+          }
+
           return {
-            past: [...state.past.slice(-59), previous],
+            past: [...state.past.slice(-59), state.present],
             present: next,
             future: [],
           };
+        });
+      },
+      beginTransient: () => {
+        // 直接存引用、不克隆：present 在本 store 内只做不可变替换、从不原地修改，
+        // 手势开始时的这份对象到结束时仍是原样，可以直接充当历史基线。
+        set((state) => ({ transientBase: state.present }));
+      },
+      updateSlotTransient: (index, patch) => {
+        set((state) => ({
+          present: {
+            ...state.present,
+            slotItems: state.present.slotItems.map((item, slotIndex) =>
+              slotIndex !== index ? item : { ...item, ...patch },
+            ),
+          },
+        }));
+      },
+      endTransient: () => {
+        const state = get();
+        const base = state.transientBase;
+        if (base === null) {
+          return;
+        }
+
+        // 没动过（引用未变）或动了又复原：只清基线，不产生历史记录
+        if (base === state.present || JSON.stringify(base) === JSON.stringify(state.present)) {
+          set({ transientBase: null });
+          return;
+        }
+
+        set({
+          transientBase: null,
+          past: [...state.past.slice(-59), base],
+          future: [],
         });
       },
       undo: () => {
@@ -176,6 +226,8 @@ export const useCollageStore = create<CollageStoreState>()(
             future: [clonePresentState(state.present), ...state.future].slice(0, 59),
             selectedSlotIndex: null,
             selectedAnnotationId: null,
+            // 手势被历史操作打断：基线已过期，作废
+            transientBase: null,
           };
         });
       },
@@ -192,6 +244,8 @@ export const useCollageStore = create<CollageStoreState>()(
             future: state.future.slice(1),
             selectedSlotIndex: null,
             selectedAnnotationId: null,
+            // 同 undo：打断进行中的手势时丢弃基线
+            transientBase: null,
           };
         });
       },
@@ -347,24 +401,8 @@ export const useCollageStore = create<CollageStoreState>()(
           draft.adaptiveTree = null;
         });
       },
-      openFolder: (path) => {
-        set((state) => ({
-          folderPath: path,
-          // 换文件夹 = 换一批列表条目，「移除」隐藏集合随之失效
-          removedPaths: [],
-          recentFolders: [path, ...state.recentFolders.filter((item) => item !== path)].slice(
-            0,
-            10,
-          ),
-        }));
-      },
-      hideEntry: (path) => {
-        set((state) =>
-          state.removedPaths.includes(path)
-            ? state
-            : { removedPaths: [...state.removedPaths, path] },
-        );
-      },
+      // 文件夹直览状态（当前文件夹 / 最近使用 / 隐藏条目）已上提到全局
+      // `useFileSourceStore`：文件来源是应用级能力，不再属于拼图。
       setRestorePending: (pending) => {
         set({ restorePending: pending });
       },
@@ -412,16 +450,28 @@ export const useCollageStore = create<CollageStoreState>()(
     }),
     {
       name: 'copicseal-collage-state',
+      // 逐帧更新（拖拽、滑杆连打）会高频触发持久化，改走合并写入的存储
+      storage: createJSONStorage(() => coalescedLocalStorage),
       partialize: (state) => ({
         present: state.present,
-        folderPath: state.folderPath,
-        recentFolders: state.recentFolders,
       }),
       merge: (persistedState, currentState) => {
-        const persisted = persistedState as Partial<CollageStoreState> | undefined;
+        const persisted = persistedState as
+          | (Partial<CollageStoreState> & {
+              /** 旧版拼图状态里的文件夹字段：已迁往全局文件来源，读取后直接丢弃 */
+              folderPath?: string | null;
+              recentFolders?: string[];
+            })
+          | undefined;
         if (!persisted?.present) {
           return currentState;
         }
+
+        const restPersisted = { ...persisted };
+        // 旧版拼图状态里的文件夹字段迁到全局 `useFileSourceStore`（见该文件的首次迁移），
+        // 这里直接丢弃，避免旧键残留进拼图状态
+        delete restPersisted.folderPath;
+        delete restPersisted.recentFolders;
 
         // 持久化的槽位引用着上次会话的直览照片（id = 文件路径）：
         // 先挂起画布对账，等这些路径懒导入回填完成后再放行，否则会把槽位清空。
@@ -431,7 +481,7 @@ export const useCollageStore = create<CollageStoreState>()(
 
         return {
           ...currentState,
-          ...persisted,
+          ...restPersisted,
           present: {
             ...currentState.present,
             ...persisted.present,
@@ -444,8 +494,6 @@ export const useCollageStore = create<CollageStoreState>()(
               persisted.present.annotations ?? currentState.present.annotations,
             ),
           },
-          folderPath: persisted.folderPath ?? null,
-          recentFolders: Array.isArray(persisted.recentFolders) ? persisted.recentFolders : [],
           restorePending: hasSlotPhotos || hasAdaptivePhotos,
         };
       },

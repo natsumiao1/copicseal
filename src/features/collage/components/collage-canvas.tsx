@@ -8,7 +8,6 @@ import {
   pruneAdaptiveTree,
 } from '@/features/collage/adaptive';
 import { CollageAdaptiveLayout } from '@/features/collage/components/collage-adaptive-layout';
-import { useCollagePhotoImport } from '@/features/collage/hooks/use-collage-photo-import';
 import { COLLAGE_LAYOUTS } from '@/features/collage/layouts';
 import {
   createEmptySlotState,
@@ -17,6 +16,7 @@ import {
 } from '@/features/collage/lib';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import { useElementSize } from '@/shared/hooks/use-element-size';
+import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import { cn } from '@/shared/lib/utils';
 
@@ -26,9 +26,18 @@ export function CollageCanvas({
   previewRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const { photos, currentPhoto } = usePhotos();
-  const { ensureByPath } = useCollagePhotoImport();
-  const { present, selectedSlotIndex, restorePending, selectSlot, assignPhotoToSlot, commit } =
-    useCollageStore();
+  const { ensureByPath } = usePhotoImportByPath();
+  const {
+    present,
+    selectedSlotIndex,
+    restorePending,
+    selectSlot,
+    assignPhotoToSlot,
+    commit,
+    beginTransient,
+    updateSlotTransient,
+    endTransient,
+  } = useCollageStore();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const viewportSize = useElementSize(viewportRef);
 
@@ -239,30 +248,39 @@ export function CollageCanvas({
                       onMouseDown={(event) => {
                         event.preventDefault();
                         selectSlot(index);
+                        // 拖拽是连续手势：期间只做临时更新，松手才把起点快照作为一步历史入栈，
+                        // 否则每个 mousemove 都入栈，撤销会退化成「按像素撤销」
+                        beginTransient();
                         const startX = event.clientX;
                         const startY = event.clientY;
                         const startOffsetX = slot.offsetX;
                         const startOffsetY = slot.offsetY;
 
-                        const handleMove = (moveEvent: MouseEvent) => {
-                          commit((draft) => {
-                            const currentSlot = draft.slotItems[index] ?? createEmptySlotState();
-                            draft.slotItems[index] = {
-                              ...currentSlot,
-                              offsetX: startOffsetX + (moveEvent.clientX - startX),
-                              offsetY: startOffsetY + (moveEvent.clientY - startY),
-                              photoId: photo.id,
-                            };
-                          });
-                        };
-
                         const handleUp = () => {
                           window.removeEventListener('mousemove', handleMove);
                           window.removeEventListener('mouseup', handleUp);
+                          window.removeEventListener('blur', handleUp);
+                          endTransient();
+                        };
+
+                        const handleMove = (moveEvent: MouseEvent) => {
+                          // 在窗口外松手收不到 mouseup：回到窗口后的第一次移动 buttons 已归零，
+                          // 据此补一次收尾，避免监听器与手势基线一直挂着
+                          if (moveEvent.buttons === 0) {
+                            handleUp();
+                            return;
+                          }
+                          updateSlotTransient(index, {
+                            offsetX: startOffsetX + (moveEvent.clientX - startX),
+                            offsetY: startOffsetY + (moveEvent.clientY - startY),
+                            photoId: photo.id,
+                          });
                         };
 
                         window.addEventListener('mousemove', handleMove);
                         window.addEventListener('mouseup', handleUp);
+                        // 拖拽中切走窗口（焦点丢失）时同样收尾
+                        window.addEventListener('blur', handleUp);
                       }}
                     >
                       <img
@@ -290,9 +308,8 @@ export function CollageCanvas({
                     按 slotItems 循环会让 layout.slots[index] 越界并清空整窗。 */}
                 {layout.slots.map((gridSlot, index) => {
                   const slotItem = present.slotItems[index] ?? createEmptySlotState();
-                  const photo = slotItem.photoId
-                    ? (photos.find((item) => item.id === slotItem.photoId) ?? null)
-                    : null;
+                  // photoById 已按会话照片建好索引：这里避免每个槽位线性扫一遍 photos
+                  const photo = slotItem.photoId ? (photoById.get(slotItem.photoId) ?? null) : null;
 
                   return (
                     <button

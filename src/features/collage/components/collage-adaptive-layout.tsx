@@ -6,9 +6,9 @@ import {
   isAdaptiveEdgeFlush,
   photoRatio,
 } from '@/features/collage/adaptive';
-import { useCollagePhotoImport } from '@/features/collage/hooks/use-collage-photo-import';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import type { AdaptiveInsertDirection } from '@/features/collage/types';
+import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import type { ImportedPhoto } from '@/shared/types/photo';
 
@@ -80,7 +80,7 @@ function nearestEdgeSide(
 
 interface CollageAdaptiveLayoutProps {
   photoById: Map<string, ImportedPhoto>;
-  /** 内容区内边距：已按画布比例分配到两条轴（长边 = 滑杆值），保证内容框等比（见 docs/09 9.6） */
+  /** 内容区内边距：已按画布比例分配到两条轴（长边 = 滑杆值），保证内容框等比（见 docs/features.md 2.4） */
   contentPadding: string;
 }
 
@@ -98,7 +98,7 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
   const insertAdaptivePhoto = useCollageStore((state) => state.insertAdaptivePhoto);
   const replaceAdaptivePhoto = useCollageStore((state) => state.replaceAdaptivePhoto);
   const removeAdaptivePhoto = useCollageStore((state) => state.removeAdaptivePhoto);
-  const { ensureByPath } = useCollagePhotoImport();
+  const { ensureByPath } = usePhotoImportByPath();
   const { photos } = usePhotos();
   const photosRef = useRef(photos);
   photosRef.current = photos;
