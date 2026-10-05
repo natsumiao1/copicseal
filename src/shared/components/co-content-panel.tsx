@@ -5,8 +5,16 @@ import type { FolderImageFile } from '@/platform/contracts';
 import { useElementSize } from '@/shared/hooks/use-element-size';
 import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
+import {
+  collectAvailability,
+  type FilterCriteria,
+  hasCriteria,
+  matchesFilter,
+  resolveCriteria,
+} from '@/shared/lib/image-filter';
 import { cn } from '@/shared/lib/utils';
 import { useFileSourceStore } from '@/shared/store/use-file-source-store';
+import { useFilterStore } from '@/shared/store/use-filter-store';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/shared/ui/tooltip';
 
 /** 网格列间距（对应 `gap-2`）。容器 `px-2` 的内边距不计入 contentRect，无需参与计算。 */
@@ -82,11 +90,12 @@ function findRowAfter(offsets: number[], y: number): number {
   return low;
 }
 
-type ContentStatus = 'idle' | 'checking' | 'ready' | 'invalid';
-
 /**
  * 内容边栏（文件夹直览，全局文件来源）：枚举当前文件夹的图片，按需生成缩略图，
  * 点击加入全局素材会话并设为当前图片，拖拽可送入拼图画布槽位；「移除」仅列表内隐藏。
+ *
+ * 条目数据来自 `useFileSourceStore`（与筛选器共用一份，枚举只发生一次），
+ * 展示集合在移除隐藏与筛选条件（星级 / 标签 / 文件类型）之上过滤。
  *
  * 本栏是停靠布局里的「内容」面板：标题由 tab 条承担，表头只保留信息行
  * （文件夹名 · 图片数 / 导入进度）；目录切换只走文件夹树，不设刷新 / 打开文件夹入口。
@@ -95,14 +104,21 @@ export function CoContentPanel() {
   const folderPath = useFileSourceStore((state) => state.folderPath);
   const removedPaths = useFileSourceStore((state) => state.removedPaths);
   const hideEntry = useFileSourceStore((state) => state.hideEntry);
+  const entries = useFileSourceStore((state) => state.entries);
+  const status = useFileSourceStore((state) => state.entriesStatus);
+  const ratings = useFilterStore((state) => state.ratings);
+  const labels = useFilterStore((state) => state.labels);
+  const types = useFilterStore((state) => state.types);
+  const ratios = useFilterStore((state) => state.ratios);
+  const tags = useFilterStore((state) => state.tags);
+  const tagsStatus = useFilterStore((state) => state.tagsStatus);
+  const tagsFolder = useFilterStore((state) => state.tagsFolder);
   const { selectByPath } = usePhotoImportByPath();
   const { currentPhoto: sessionPhoto, importState } = usePhotos();
 
   const importProgress =
     importState.total > 0 ? Math.min((importState.current / importState.total) * 100, 100) : 0;
 
-  const [status, setStatus] = useState<ContentStatus>('idle');
-  const [entries, setEntries] = useState<FolderImageFile[]>([]);
   const [thumbs, setThumbs] = useState<Map<string, string>>(() => new Map());
   const [cacheDir, setCacheDir] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -112,8 +128,6 @@ export function CoContentPanel() {
   const pendingThumbRef = useRef(new Set<string>());
   // 代际号：切换文件夹后让仍在轮询旧缩略图的异步任务作废
   const generationRef = useRef(0);
-  // 枚举请求序号：快速切换文件夹时丢弃过期响应
-  const requestRef = useRef(0);
 
   // 缓存目录只需读一次，供缩略图命令使用
   useEffect(() => {
@@ -131,59 +145,33 @@ export function CoContentPanel() {
     };
   }, []);
 
-  /** 枚举当前文件夹：只读路径，不复制原文件。切换文件夹由 `folderPath` 变化触发。 */
-  const loadFolder = useCallback(async () => {
-    if (!folderPath) {
-      setStatus('idle');
-      setEntries([]);
-      return;
-    }
-
-    requestRef.current += 1;
-    const request = requestRef.current;
-    setStatus('checking');
-    try {
-      const exists = await pathExists(folderPath);
-      if (request !== requestRef.current) {
-        return;
-      }
-      if (!exists) {
-        // 路径失效：不伪造目录内容，交给空态提示重新选择
-        setStatus('invalid');
-        setEntries([]);
-        return;
-      }
-
-      const images = await platform.files.listFolderImages(folderPath);
-      if (request !== requestRef.current) {
-        return;
-      }
-
-      generationRef.current += 1;
-      setThumbs(new Map());
-      setEntries(images);
-      setScrollTop(0);
-      if (containerRef.current) {
-        containerRef.current.scrollTop = 0;
-      }
-      setStatus('ready');
-    } catch (error) {
-      console.warn('[file-source] 枚举文件夹失败:', folderPath, error);
-      if (request === requestRef.current) {
-        setStatus('invalid');
-      }
+  // 换文件夹即换一批条目：作废旧缩略图轮询、清空缩略图并回到列表顶部
+  // biome-ignore lint/correctness/useExhaustiveDependencies: folderPath 只作为「目录已切换」的触发信号，效果体内无需引用
+  useEffect(() => {
+    generationRef.current += 1;
+    pendingThumbRef.current.clear();
+    setThumbs(new Map());
+    setScrollTop(0);
+    if (containerRef.current) {
+      containerRef.current.scrollTop = 0;
     }
   }, [folderPath]);
 
-  useEffect(() => {
-    void loadFolder();
-  }, [loadFolder]);
-
   const removedSet = useMemo(() => new Set(removedPaths), [removedPaths]);
-  const visibleEntries = useMemo(
-    () => entries.filter((entry) => !removedSet.has(entry.path)),
-    [entries, removedSet],
+  const criteria: FilterCriteria = useMemo(
+    () => ({ ratings, labels, types, ratios }),
+    [labels, ratings, ratios, types],
   );
+  const availability = useMemo(() => collectAvailability(entries), [entries]);
+  const tagsReady = tagsStatus === 'ready' && tagsFolder === folderPath;
+  // 空态文案分流：有筛选条件时提示筛选器，否则是被「移除」隐藏
+  const hasFilterCriteria = hasCriteria(criteria);
+  const visibleEntries = useMemo(() => {
+    const resolved = resolveCriteria(criteria, availability, tagsReady);
+    return entries.filter(
+      (entry) => !removedSet.has(entry.path) && matchesFilter(entry, resolved, tags),
+    );
+  }, [availability, criteria, entries, removedSet, tags, tagsReady]);
 
   /**
    * 行布局跟随容器宽度与每张图的原始宽高动态计算：
@@ -367,6 +355,22 @@ export function CoContentPanel() {
     }
 
     if (visibleEntries.length === 0 && status === 'ready') {
+      if (entries.length > 0) {
+        // 条目存在但全被「移除隐藏」或筛选条件排除：提示去向，不误报文件夹为空
+        return (
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
+            <Images className="size-7 text-muted-foreground" />
+            <div>
+              <p className="text-xs font-medium text-foreground">没有匹配的图片</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                {hasFilterCriteria
+                  ? '当前筛选条件下没有结果，可在筛选器面板调整或清除。'
+                  : '图片已被移除（仅隐藏，不删除文件），可在文件夹栏切换目录恢复。'}
+              </p>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
           <Images className="size-7 text-muted-foreground" />
@@ -415,7 +419,10 @@ export function CoContentPanel() {
         ) : folderPath ? (
           <div className="flex shrink-0 items-center border-b border-border/80 px-3 py-2">
             <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-              {baseName(folderPath)} · {visibleEntries.length} 张图片
+              {baseName(folderPath)} ·{' '}
+              {visibleEntries.length === entries.length
+                ? `${entries.length} 张图片`
+                : `${visibleEntries.length} / ${entries.length} 张图片`}
             </p>
           </div>
         ) : null}

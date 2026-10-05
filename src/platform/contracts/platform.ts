@@ -10,6 +10,7 @@ import type {
   FolderImageFile,
   FontInfo,
   ImageFileMeta,
+  ImageTags,
   RootDirectory,
 } from './index';
 import type { ImportProgressSnapshot } from './services';
@@ -49,6 +50,8 @@ export interface FileServiceContract {
   listSubdirectories(path: string): Promise<DirectoryNode[]>;
   listRootDirectories(): Promise<RootDirectory[]>;
   listFolderImages(path: string): Promise<FolderImageFile[]>;
+  /** 批量读取图片的 XMP 标签（星级 / 颜色标签），供筛选器过滤使用。 */
+  readImageTags(paths: string[]): Promise<ImageTags[]>;
   ensureBrowseThumbnail(path: string, cacheDir: string): Promise<BrowseThumbnailMeta>;
   importImageToCache(path: string, cacheDir: string): Promise<CachedImageMeta>;
   importImageBytesToCache(

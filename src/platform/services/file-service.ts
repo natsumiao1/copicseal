@@ -11,6 +11,7 @@ import {
   listRootDirectories,
   listSubdirectories,
   readImageFile,
+  readImageTags,
   writeBinaryFile,
 } from '@/platform/providers/tauri/api';
 
@@ -27,6 +28,7 @@ export const fileService: FileServiceContract = {
   listSubdirectories,
   listRootDirectories,
   listFolderImages,
+  readImageTags,
   ensureBrowseThumbnail,
   importImageToCache,
   importImageBytesToCache,
@@ -43,5 +45,6 @@ export type {
   DirectoryNode,
   FolderImageFile,
   ImageFileMeta,
+  ImageTags,
   RootDirectory,
 } from '@/platform/contracts';

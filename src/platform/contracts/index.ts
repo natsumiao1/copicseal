@@ -210,11 +210,25 @@ export interface DirectoryNode {
   path: string;
 }
 
-/** 文件夹树根节点；`kind` 为 `home` 或 `volume`。 */
+/** 文件夹树根节点；`kind` 为 `home`（用户磁盘）、`system`（系统卷）或 `volume`（其他磁盘）。 */
 export interface RootDirectory {
   label: string;
   path: string;
   kind: string;
+}
+
+/**
+ * 图片标签：XMP 元数据里的星级与颜色标签（只读）。
+ *
+ * 星级 / 颜色标签不在 EXIF 标准内，实际存放在 XMP 中
+ * （JPEG 的 APP1 XMP 段、各格式的元数据盒，或同名 `.xmp` sidecar）。
+ */
+export interface ImageTags {
+  path: string;
+  /** 星级 1-5；未评级（含 XMP 的 0）为 null */
+  rating: number | null;
+  /** 颜色标签 `Red` / `Yellow` / `Green` / `Blue` / `Purple`；无标签为 null */
+  label: string | null;
 }
 
 /** 直览目录内的图片条目（不复制原文件）。 */

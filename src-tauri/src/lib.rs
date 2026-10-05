@@ -5,6 +5,7 @@ mod exif;
 mod font;
 mod fs;
 mod system;
+mod tags;
 mod window;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -60,6 +61,7 @@ pub fn run() {
             exif::read_exif,
             exif::extract_jpeg_exif,
             exif::insert_jpeg_exif,
+            tags::read_image_tags,
             font::list_system_fonts,
             system::get_app_info,
         ])

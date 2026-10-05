@@ -1,5 +1,5 @@
-import { ChevronRight, Clock, Folder, FolderOpen, HardDrive, Home, Star } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, Folder, FolderOpen, HardDrive, Home, Monitor, Star } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { platform } from '@/platform';
 import type { DirectoryNode } from '@/platform/contracts';
 import { cn } from '@/shared/lib/utils';
@@ -8,8 +8,12 @@ import { useFileSourceStore } from '@/shared/store/use-file-source-store';
 interface TreeRoot {
   label: string;
   path: string;
-  kind: 'recent' | 'home' | 'volume';
+  /** `home` 用户磁盘 / `system` 系统卷（Macintosh HD） / `volume` 其他磁盘 */
+  kind: 'home' | 'system' | 'volume';
 }
+
+/** 「计算机」虚拟根节点的占位路径：没有真实路径，展开态只在前端维护。 */
+const COMPUTER_NODE = '__computer__';
 
 interface TreeState {
   /** 展开中的目录（折叠后保留缓存，再次展开不重新枚举） */
@@ -22,11 +26,6 @@ interface TreeState {
 
 function pathSeparator(path: string): string {
   return path.includes('\\') ? '\\' : '/';
-}
-
-function baseName(path: string): string {
-  const separator = pathSeparator(path);
-  return path.slice(path.lastIndexOf(separator) + 1) || path;
 }
 
 function parentPath(path: string): string | null {
@@ -51,10 +50,11 @@ function ancestorPaths(path: string): string[] {
 }
 
 /**
- * 文件夹树（文件夹边栏）：根节点为「最近使用 / 用户主目录 / 外接磁盘」，
- * 展开时按需枚举子目录，不做递归扫描。选中目录驱动右侧内容边栏加载。
+ * 文件夹树（文件夹边栏）：唯一顶级入口是「计算机」，其下依次是
+ * 「用户磁盘」（用户主目录）、「Macintosh HD」（系统卷；Windows 为各盘符）
+ * 与外接磁盘，展开时按需枚举子目录，不做递归扫描。选中目录驱动右侧内容边栏加载。
  *
- * 文件来源是全局通用能力：当前文件夹与最近使用列表都来自 `useFileSourceStore`，
+ * 文件来源是全局通用能力：当前文件夹来自 `useFileSourceStore`，
  * 拼图与边框水印共用同一棵树。本栏是停靠布局里的「文件夹」面板，标题、移动、
  * 合并与关闭统一由面板 tab 条承担，这里不再自设表头。
  *
@@ -63,13 +63,13 @@ function ancestorPaths(path: string): string[] {
  */
 export function CoFolderTree() {
   const folderPath = useFileSourceStore((state) => state.folderPath);
-  const recentFolders = useFileSourceStore((state) => state.recentFolders);
   const favoriteFolders = useFileSourceStore((state) => state.favoriteFolders);
   const openFolder = useFileSourceStore((state) => state.openFolder);
   const toggleFavoriteFolder = useFileSourceStore((state) => state.toggleFavoriteFolder);
   const [rootNodes, setRootNodes] = useState<TreeRoot[]>([]);
   const [tree, setTree] = useState<TreeState>(() => ({
-    expanded: new Set<string>(),
+    // 「计算机」默认展开：打开面板即看到磁盘列表
+    expanded: new Set<string>([COMPUTER_NODE]),
     loading: new Set<string>(),
     cache: new Map<string, DirectoryNode[]>(),
   }));
@@ -89,7 +89,7 @@ export function CoFolderTree() {
           roots.map((root) => ({
             label: root.label,
             path: root.path,
-            kind: root.kind === 'home' ? 'home' : 'volume',
+            kind: root.kind === 'home' ? 'home' : root.kind === 'system' ? 'system' : 'volume',
           })),
         );
       })
@@ -130,7 +130,7 @@ export function CoFolderTree() {
       });
   }, []);
 
-  /** 幂等展开：已展开则跳过；缓存命中时不重新枚举。 */
+  /** 幂等展开：已展开则跳过；缓存命中时不重新枚举。「计算机」是虚拟节点，直接切展开态。 */
   const expand = useCallback(
     (path: string) => {
       setTree((prev) => {
@@ -139,7 +139,7 @@ export function CoFolderTree() {
         }
         return { ...prev, expanded: new Set(prev.expanded).add(path) };
       });
-      if (!treeRef.current.cache.has(path)) {
+      if (path !== COMPUTER_NODE && !treeRef.current.cache.has(path)) {
         loadChildren(path);
       }
     },
@@ -156,14 +156,14 @@ export function CoFolderTree() {
         }
         return { ...prev, expanded: new Set(prev.expanded).add(path) };
       });
-      if (!treeRef.current.cache.has(path)) {
+      if (path !== COMPUTER_NODE && !treeRef.current.cache.has(path)) {
         loadChildren(path);
       }
     },
     [loadChildren],
   );
 
-  // 选中目录不在可见链上时（重启恢复、从最近列表点入），逐级展开祖先让它出现在树里
+  // 选中目录不在可见链上时（重启恢复持久化选中），逐级展开祖先让它出现在树里
   useEffect(() => {
     if (!folderPath) {
       return;
@@ -181,22 +181,6 @@ export function CoFolderTree() {
       cancelled = true;
     };
   }, [expand, folderPath]);
-
-  const roots = useMemo(() => {
-    const homeRoots = rootNodes.filter((root) => root.kind === 'home');
-    const volumeRoots = rootNodes.filter((root) => root.kind === 'volume');
-    const homePaths = new Set(homeRoots.map((root) => root.path));
-    const volumePaths = new Set(volumeRoots.map((root) => root.path));
-    const recentRoots = recentFolders
-      .filter((path) => !homePaths.has(path) && !volumePaths.has(path))
-      .map((path) => ({ label: baseName(path), path, kind: 'recent' as const }));
-
-    return [
-      { title: '最近使用', items: recentRoots },
-      { title: '主目录', items: homeRoots },
-      { title: '磁盘', items: volumeRoots },
-    ].filter((section) => section.items.length > 0);
-  }, [recentFolders, rootNodes]);
 
   const renderChevron = (path: string) => {
     const isExpanded = tree.expanded.has(path);
@@ -291,22 +275,29 @@ export function CoFolderTree() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
       <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1.5">
-        {roots.length === 0 ? (
+        {rootNodes.length === 0 ? (
           <p className="px-2 py-3 text-[11px] text-muted-foreground">正在读取根目录…</p>
         ) : (
-          roots.map((section) => (
-            <div key={section.title} className="mb-1.5 last:mb-0">
-              <p className="px-2 py-1 text-[10px] font-medium tracking-wide text-muted-foreground">
-                {section.title}
-              </p>
-              {section.items.map((root) => {
+          <div>
+            <div className={rowClass(false)} style={{ paddingLeft: '8px' }}>
+              {renderChevron(COMPUTER_NODE)}
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                onClick={() => toggleExpand(COMPUTER_NODE)}
+              >
+                <Monitor className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">计算机</span>
+              </button>
+            </div>
+            {tree.expanded.has(COMPUTER_NODE) &&
+              rootNodes.map((root) => {
                 const isSelected = folderPath === root.path;
-                const RootIcon =
-                  root.kind === 'recent' ? Clock : root.kind === 'home' ? Home : HardDrive;
+                const RootIcon = root.kind === 'home' ? Home : HardDrive;
 
                 return (
                   <div key={root.path}>
-                    <div className={rowClass(isSelected)} style={{ paddingLeft: '8px' }}>
+                    <div className={rowClass(isSelected)} style={{ paddingLeft: '20px' }}>
                       {renderChevron(root.path)}
                       <button
                         type="button"
@@ -329,12 +320,11 @@ export function CoFolderTree() {
                       {renderFavorite(root.path)}
                     </div>
                     {tree.expanded.has(root.path) &&
-                      tree.cache.get(root.path)?.map((child) => renderNode(child, 1))}
+                      tree.cache.get(root.path)?.map((child) => renderNode(child, 2))}
                   </div>
                 );
               })}
-            </div>
-          ))
+          </div>
         )}
       </div>
     </div>

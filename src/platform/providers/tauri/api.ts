@@ -18,6 +18,7 @@ import type {
   FolderImageFile,
   FontInfo,
   ImageFileMeta,
+  ImageTags,
   RootDirectory,
   UpsertComarkTemplatePayload,
   WindowFrameMode,
@@ -42,6 +43,7 @@ export type {
   FontConfig,
   FontInfo,
   ImageFileMeta,
+  ImageTags,
   OutputConfig,
   OutputPreset,
   RootDirectory,
@@ -69,13 +71,17 @@ export function listImageFilesInDirectory(path: string): Promise<string[]> {
 export function listSubdirectories(path: string): Promise<DirectoryNode[]> {
   return invoke('list_subdirectories', { path });
 }
-/** 文件夹树根节点：用户主目录 + 磁盘根。 */
+/** 文件夹树根节点：用户磁盘 + 系统卷 + 其他磁盘（统一挂在「计算机」下）。 */
 export function listRootDirectories(): Promise<RootDirectory[]> {
   return invoke('list_root_directories');
 }
 /** 列出目录内的受支持图片（路径 + 文件名 + 大小），供文件夹直览使用。 */
 export function listFolderImages(path: string): Promise<FolderImageFile[]> {
   return invoke('list_folder_images', { path });
+}
+/** 批量读取图片的 XMP 标签（星级 / 颜色标签）。 */
+export function readImageTags(paths: string[]): Promise<ImageTags[]> {
+  return invoke('read_image_tags', { paths });
 }
 /** 为直览条目按需生成缩略图（直接以原文件为源，不复制原文件）。 */
 export function ensureBrowseThumbnail(

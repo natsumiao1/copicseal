@@ -13,19 +13,23 @@ import 'dockview-react/dist/styles/dockview.css';
 import './business-workbench.css';
 
 /**
- * 工作台的五个停靠面板：文件夹 / 收藏夹 / 内容 / 预览区 / 调整区。
+ * 工作台的六个停靠面板：文件夹 / 收藏夹 / 筛选器 / 内容 / 预览 / 调整。
  *
  * 每个面板都是一个矩形区域，顶部带 tab 条；面板之间可以拖动换位、四向分割，
  * 拖到另一个面板中心则合并成同组的两个 tab。默认布局里「收藏夹」与「文件夹」
- * 同组，即第一栏的两个 tab。布局整体持久化（见 `useWorkbenchDockStore`），
- * 关闭的面板从顶栏「视图」菜单恢复。
+ * 同组（第一栏上半的两个 tab），「筛选器」停靠在文件夹栏正下方。
+ * 布局整体持久化（见 `useWorkbenchDockStore`），关闭的面板从顶栏「视图」菜单恢复。
+ *
+ * `defaultRatio` 的含义随位置而定：顶层栏位是宽度比例；左栏内部的「筛选器」
+ * 是其在栏内的高度比例（文件夹组占其余部分），见 `applyDefaultRatios`。
  */
 export const WORKBENCH_PANELS = {
   folder: { title: '文件夹', minimumWidth: 140, defaultRatio: 0.15 },
   favorites: { title: '收藏夹', minimumWidth: 140, defaultRatio: 0.15 },
+  filter: { title: '筛选器', minimumWidth: 140, defaultRatio: 0.3 },
   content: { title: '内容', minimumWidth: 170, defaultRatio: 0.2 },
-  workspace: { title: '预览区', minimumWidth: 240, defaultRatio: 0.45 },
-  properties: { title: '调整区', minimumWidth: 180, defaultRatio: 0.2 },
+  workspace: { title: '预览', minimumWidth: 240, defaultRatio: 0.45 },
+  properties: { title: '调整', minimumWidth: 180, defaultRatio: 0.2 },
 } as const satisfies Record<string, { title: string; minimumWidth: number; defaultRatio: number }>;
 
 export type WorkbenchPanelId = keyof typeof WORKBENCH_PANELS;
@@ -33,9 +37,10 @@ export type WorkbenchPanelId = keyof typeof WORKBENCH_PANELS;
 export const WORKBENCH_PANEL_IDS = Object.keys(WORKBENCH_PANELS) as WorkbenchPanelId[];
 
 /**
- * 默认布局的一行四栏叶子（从左到右）；「收藏夹」并入「文件夹」组，不单独占栏。
+ * 默认布局的顶层栏位顺序（从左到右）；首栏是「文件夹 + 收藏夹」组与「筛选器」
+ * 组成的纵向列，「收藏夹」不单独占栏。
  *
- * 校正默认比例时按这份清单核对叶子数——直接用 `WORKBENCH_PANEL_IDS` 会因为
+ * 校正默认比例时按这份清单核对顶层数量——直接用 `WORKBENCH_PANEL_IDS` 会因为
  * 同组多出的 tab 数量不符而整段跳过。
  */
 const DEFAULT_LAYOUT_LEAVES: readonly WorkbenchPanelId[] = [
@@ -59,6 +64,8 @@ export interface BusinessWorkbenchPanels {
   folder: ReactNode;
   /** 收藏的文件夹列表（全局文件来源注入） */
   favorites: ReactNode;
+  /** 标签 / 文件类型筛选器（全局文件来源注入） */
+  filter: ReactNode;
   /** 内容直览（全局文件来源注入） */
   content: ReactNode;
   /** 页面的预览工作区 */
@@ -100,6 +107,7 @@ function createPanelContent(render: (panels: BusinessWorkbenchPanels) => ReactNo
 const PANEL_COMPONENTS: Record<WorkbenchPanelId, ReturnType<typeof createPanelContent>> = {
   folder: createPanelContent((panels) => panels.folder),
   favorites: createPanelContent((panels) => panels.favorites),
+  filter: createPanelContent((panels) => panels.filter),
   content: createPanelContent((panels) => panels.content),
   workspace: createPanelContent((panels) => panels.workspace),
   properties: createPanelContent((panels) => panels.properties()),
@@ -142,7 +150,7 @@ function isUsableLayout(value: unknown): value is SerializedDockview {
   return walk(layout.grid.root);
 }
 
-/** 默认布局的构建顺序：一行四栏，从左到右；首栏是文件夹 + 收藏夹两个 tab。 */
+/** 默认布局的构建顺序：先一行四栏（首栏是文件夹 + 收藏夹两个 tab），最后把筛选器挂到文件夹栏下方。 */
 function buildDefaultLayout(api: DockviewApi) {
   api.addPanel({
     id: 'folder',
@@ -183,15 +191,30 @@ function buildDefaultLayout(api: DockviewApi) {
     position: { referencePanel: 'workspace', direction: 'right' },
     initialWidth: 300,
   });
+  // 必须在四栏成形之后再向下分栏：此时根节点已是横向分支，
+  // 「below 文件夹」会在首栏位置插入纵向分支，不会影响右侧三栏
+  api.addPanel({
+    id: 'filter',
+    component: 'filter',
+    title: WORKBENCH_PANELS.filter.title,
+    minimumWidth: WORKBENCH_PANELS.filter.minimumWidth,
+    position: { referencePanel: 'folder', direction: 'below' },
+    inactive: true,
+  });
+  api.getPanel('folder')?.api.setActive();
   applyDefaultRatios(api);
 }
 
 /**
- * 把默认布局的面板宽度校正到目标比例。
+ * 把默认布局的面板尺寸校正到目标比例。
  *
  * dockview 对 `initialWidth` 只是「尽力而为」，直接按 addPanel 的结果落地宽度
- * 不可控；这里读出序列化布局、改写默认四栏叶子的 size 后写回，让首屏稳定在
- * 文件夹 15% / 内容 20% / 预览区 45% / 调整区 20%。结构与预期不符时保持原样。
+ * 不可控；这里读出序列化布局、改写尺寸后写回，让首屏稳定在
+ * 文件夹栏 15% / 内容 20% / 预览 45% / 调整 20%。
+ *
+ * 校正两层：顶层四个栏位按 `defaultRatio` 作宽度比例——首栏不是单一叶子，
+ * 而是「文件夹组 + 筛选器」的纵向列；列内再按筛选器的 `defaultRatio`（高度
+ * 比例）分高，文件夹组占其余部分。结构与预期不符时保持原样。
  */
 function applyDefaultRatios(api: DockviewApi) {
   try {
@@ -205,21 +228,45 @@ function applyDefaultRatios(api: DockviewApi) {
       return;
     }
     const leaves = root.data;
-    const known = new Set<string>(DEFAULT_LAYOUT_LEAVES);
     let total = 0;
-    for (const leaf of leaves) {
-      if (leaf.type !== 'leaf' || Array.isArray(leaf.data)) {
+    for (let index = 0; index < leaves.length; index++) {
+      const expected = DEFAULT_LAYOUT_LEAVES[index];
+      const ratio = WORKBENCH_PANELS[expected].defaultRatio;
+      const node = leaves[index];
+
+      if (node.type === 'branch') {
+        // 纵向列只允许出现在首栏（文件夹 + 收藏夹 / 筛选器）；
+        // 不假设列内先后顺序，按面板 id 定位两个叶子
+        if (expected !== 'folder' || !Array.isArray(node.data) || node.data.length !== 2) {
+          return;
+        }
+        const isLeafWith = (child: (typeof node.data)[number], id: WorkbenchPanelId) =>
+          child.type === 'leaf' &&
+          !Array.isArray(child.data) &&
+          child.data.views?.includes(id) === true;
+        const folderLeaf = node.data.find((child) => isLeafWith(child, 'folder'));
+        const filterLeaf = node.data.find((child) => isLeafWith(child, 'filter'));
+        if (!folderLeaf || !filterLeaf || folderLeaf === filterLeaf) {
+          return;
+        }
+        const columnSize = Math.round(ratio * 1000);
+        const filterSize = Math.round(columnSize * WORKBENCH_PANELS.filter.defaultRatio);
+        node.size = columnSize;
+        folderLeaf.size = columnSize - filterSize;
+        filterLeaf.size = filterSize;
+        total += columnSize;
+        continue;
+      }
+
+      if (node.type !== 'leaf' || Array.isArray(node.data)) {
         return;
       }
-      const panelId = leaf.data.views?.[0];
-      const ratio = panelId
-        ? WORKBENCH_PANELS[panelId as WorkbenchPanelId]?.defaultRatio
-        : undefined;
-      if (!panelId || !known.has(panelId) || ratio === undefined) {
+      const panelId = node.data.views?.[0];
+      if (!panelId || panelId !== expected) {
         return;
       }
-      leaf.size = Math.round(ratio * 1000);
-      total += leaf.size;
+      node.size = Math.round(ratio * 1000);
+      total += node.size;
     }
     root.size = total;
     api.fromJSON(json);
@@ -230,30 +277,31 @@ function applyDefaultRatios(api: DockviewApi) {
 }
 
 /**
- * 恢复被关闭的面板：优先并入指定的同组面板（收藏夹 → 文件夹），
- * 否则停靠到当前激活面板右侧（首次恢复时布局里还没有激活面板则直接铺开）。
+ * 恢复被关闭的面板：优先并入指定的锚点面板（收藏夹 → 文件夹组内、
+ * 筛选器 → 文件夹栏下方），否则停靠到当前激活面板右侧
+ * （首次恢复时布局里还没有激活面板则直接铺开）。
  */
-const PANEL_RESTORE_GROUPING: Partial<Record<WorkbenchPanelId, WorkbenchPanelId>> = {
-  favorites: 'folder',
+const PANEL_RESTORE_GROUPING: Partial<
+  Record<WorkbenchPanelId, { reference: WorkbenchPanelId; direction: 'within' | 'below' }>
+> = {
+  favorites: { reference: 'folder', direction: 'within' },
+  filter: { reference: 'folder', direction: 'below' },
 };
 
 function addPanelAtRestorePosition(api: DockviewApi, id: WorkbenchPanelId) {
   const grouping = PANEL_RESTORE_GROUPING[id];
-  const grouped = grouping ? api.getPanel(grouping) : undefined;
+  const grouped = grouping ? api.getPanel(grouping.reference) : undefined;
   const reference = grouped ?? api.activePanel;
   api.addPanel({
     id,
     component: id,
     title: WORKBENCH_PANELS[id].title,
     minimumWidth: WORKBENCH_PANELS[id].minimumWidth,
-    ...(reference
-      ? {
-          position: {
-            referencePanel: reference,
-            direction: grouped ? 'within' : 'right',
-          },
-        }
-      : {}),
+    ...(reference && grouping && grouped
+      ? { position: { referencePanel: reference, direction: grouping.direction } }
+      : reference
+        ? { position: { referencePanel: reference, direction: 'right' as const } }
+        : {}),
   });
 }
 
@@ -285,6 +333,48 @@ function ensureFavoritesPanel(api: DockviewApi, store: typeof useWorkbenchDockSt
     store.getState().markFavoritesSeeded();
   } catch (error) {
     console.warn('[workbench] 补挂收藏夹面板失败:', error);
+  }
+}
+
+/**
+ * 给升级前保存的布局补挂「筛选器」面板：默认布局自带它，只有旧布局缺失，
+ * 首次加载时停靠到文件夹栏下方。补挂一次后由 `filterSeeded` 记住，
+ * 之后用户手动关闭 / 移走它，重启仍以布局本身为准。
+ */
+function ensureFilterPanel(api: DockviewApi, store: typeof useWorkbenchDockStore) {
+  if (store.getState().filterSeeded) {
+    return;
+  }
+  try {
+    if (!api.getPanel('filter') && api.getPanel('folder')) {
+      api.addPanel({
+        id: 'filter',
+        component: 'filter',
+        title: WORKBENCH_PANELS.filter.title,
+        minimumWidth: WORKBENCH_PANELS.filter.minimumWidth,
+        position: { referencePanel: 'folder', direction: 'below' },
+        inactive: true,
+      });
+      api.getPanel('folder')?.api.setActive();
+      // 同 ensureFavoritesPanel：立刻写回，防抖回写可能被 StrictMode 重挂载清掉
+      store.getState().setLayout(api.toJSON());
+    }
+    store.getState().markFilterSeeded();
+  } catch (error) {
+    console.warn('[workbench] 补挂筛选器面板失败:', error);
+  }
+}
+
+/**
+ * 面板标题以 `WORKBENCH_PANELS` 为准：持久化布局里存着改名前的旧标题
+ * （如「预览区」「调整区」），恢复后统一刷成当前名称，否则改名对老布局不生效。
+ */
+function syncPanelTitles(api: DockviewApi) {
+  for (const panel of api.panels) {
+    const title = WORKBENCH_PANELS[panel.id as WorkbenchPanelId]?.title;
+    if (title && panel.title !== title) {
+      panel.api.setTitle(title);
+    }
   }
 }
 
@@ -332,8 +422,11 @@ export function BusinessWorkbench({ header, routeKey, panels }: BusinessWorkbenc
       if (!restored) {
         buildDefaultLayout(api);
       }
-      // 升级前保存的布局里没有收藏夹 tab，首次加载补挂进文件夹组（默认布局自带时为空操作）
+      // 升级前保存的布局里没有收藏夹 tab / 筛选器面板，首次加载补挂（默认布局自带时为空操作）
       ensureFavoritesPanel(api, store);
+      ensureFilterPanel(api, store);
+      // 改过名的面板标题（预览区 → 预览等）对旧布局统一刷新
+      syncPanelTitles(api);
 
       store.getState().registerApi(routeKey, api);
 

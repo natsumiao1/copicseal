@@ -380,10 +380,10 @@ pub struct DirectoryNode {
     pub path: String,
 }
 
-/// 文件夹树根节点。
+/// 文件夹树的根节点（统一挂在「计算机」节点下）。
 ///
-/// `kind` 为 `home`（用户主目录）或 `volume`（磁盘根）；
-/// 「最近使用的文件夹」由前端持久化维护，不在此返回。
+/// `kind` 为 `home`（用户磁盘，用户主目录）、`system`（系统卷，macOS 即
+/// Finder 所见的 Macintosh HD）或 `volume`（其他磁盘：macOS 外接卷、Windows 盘符）。
 #[derive(Debug, Serialize)]
 pub struct RootDirectory {
     pub label: String,
@@ -712,18 +712,17 @@ fn find_ispe_box(buffer: &[u8], depth: usize) -> Option<(u32, u32)> {
     best.map(|(_, dimensions)| dimensions)
 }
 
-/// 文件夹树的固定根节点：用户主目录 + 磁盘根。
+/// 文件夹树的根节点：用户磁盘 + 系统卷 + 其他磁盘，前端统一挂在「计算机」下。
+///
+/// 顺序固定为「用户磁盘 → 系统卷 → 其他磁盘」，macOS 与 Windows 同构：
+/// Windows 没有独立的系统卷概念，所有盘符都按 `volume` 返回。
 #[tauri::command]
 pub async fn list_root_directories() -> Result<Vec<RootDirectory>, String> {
     let mut roots = Vec::new();
 
     if let Some(home) = dirs::home_dir() {
-        let label = home
-            .file_name()
-            .map(|value| value.to_string_lossy().to_string())
-            .unwrap_or_else(|| home.to_string_lossy().to_string());
         roots.push(RootDirectory {
-            label,
+            label: "用户磁盘".to_string(),
             path: home.to_string_lossy().to_string(),
             kind: "home".to_string(),
         });
@@ -731,10 +730,23 @@ pub async fn list_root_directories() -> Result<Vec<RootDirectory>, String> {
 
     #[cfg(target_os = "macos")]
     {
-        // 系统卷挂在 /，不进 /Volumes；通过主目录已经可达，这里只补充外接卷
+        roots.push(RootDirectory {
+            label: system_volume_label("/").unwrap_or_else(|| "Macintosh HD".to_string()),
+            path: "/".to_string(),
+            kind: "system".to_string(),
+        });
+
+        // 外接卷：跳过符号链接——`/Volumes/Macintosh HD` 指向 `/`，
+        // 再列一遍会与上面的系统卷重复
         if let Ok(entries) = fs::read_dir("/Volumes") {
             for entry in entries.flatten() {
                 if !entry.path().is_dir() {
+                    continue;
+                }
+                if entry
+                    .file_type()
+                    .is_ok_and(|file_type| file_type.is_symlink())
+                {
                     continue;
                 }
                 let name = entry.file_name().to_string_lossy().to_string();
@@ -765,6 +777,36 @@ pub async fn list_root_directories() -> Result<Vec<RootDirectory>, String> {
     }
 
     Ok(roots)
+}
+
+/// 读取系统卷的显示名（Finder 里显示的「Macintosh HD」即卷名）。
+///
+/// 用 `diskutil info <path>` 的 Volume Name 字段；输出跟随系统语言
+/// （中文环境下字段名可能是「卷名」），两种前缀都识别。
+/// 进程拉起失败或字段缺失时返回 `None`，由调用方回落。
+#[cfg(target_os = "macos")]
+fn system_volume_label(path: &str) -> Option<String> {
+    let output = std::process::Command::new("diskutil")
+        .arg("info")
+        .arg(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let line = line.trim();
+        for prefix in ["Volume Name:", "卷名:"] {
+            if let Some(rest) = line.strip_prefix(prefix) {
+                let name = rest.trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn import_bytes_to_cache_impl(
