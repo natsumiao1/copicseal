@@ -44,52 +44,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-/** 缩略图块的 CSS `aspect-ratio`（原图宽高比）；尺寸未知时按 1:1 兜底。 */
-function thumbRatio(entry: FolderImageFile): string {
-  return entry.width > 0 && entry.height > 0 ? `${entry.width} / ${entry.height}` : '1 / 1';
-}
-
-/** 单元格高度 = 按原图比例的缩略图块（宽/比例） + 信息行。 */
-function cellHeightOf(entry: FolderImageFile | undefined, cellWidth: number): number {
-  if (!entry) {
-    return 0;
-  }
-  const ratio = entry.width > 0 && entry.height > 0 ? entry.width / entry.height : 1;
-  return cellWidth / ratio + INFO_HEIGHT;
-}
-
-/** 行偏移前缀和中最后一个 `offset <= y` 的行号。 */
-function findRowAt(offsets: number[], y: number): number {
-  let low = 0;
-  let high = offsets.length - 1;
-  let result = 0;
-  while (low <= high) {
-    const mid = (low + high) >> 1;
-    if (offsets[mid] <= y) {
-      result = mid;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-  return result;
-}
-
-/** 第一个 `offset > y` 的行号（上界，用作开区间 end）。 */
-function findRowAfter(offsets: number[], y: number): number {
-  let low = 0;
-  let high = offsets.length;
-  while (low < high) {
-    const mid = (low + high) >> 1;
-    if (offsets[mid] <= y) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-  return low;
-}
-
 /**
  * 内容边栏（文件夹直览，全局文件来源）：枚举当前文件夹的图片，按需生成缩略图，
  * 点击加入全局素材会话并设为当前图片，拖拽可送入拼图画布槽位；「移除」仅列表内隐藏。
@@ -97,8 +51,8 @@ function findRowAfter(offsets: number[], y: number): number {
  * 条目数据来自 `useFileSourceStore`（与筛选器共用一份，枚举只发生一次），
  * 展示集合在移除隐藏与筛选条件（星级 / 标签 / 文件类型）之上过滤。
  *
- * 本栏是停靠布局里的「内容」面板：标题由 tab 条承担，表头只保留信息行
- * （文件夹名 · 图片数 / 导入进度）；目录切换只走文件夹树，不设刷新 / 打开文件夹入口。
+ * 本栏是停靠布局里的「内容」面板：标题由 tab 条承担，顶部只在导入时显示进度条，
+ * 文件夹名 · 图片数的信息行放在面板最下方；目录切换只走文件夹树，不设刷新 / 打开文件夹入口。
  */
 export function CoContentPanel() {
   const folderPath = useFileSourceStore((state) => state.folderPath);
@@ -174,34 +128,17 @@ export function CoContentPanel() {
   }, [availability, criteria, entries, removedSet, tags, tagsReady]);
 
   /**
-   * 行布局跟随容器宽度与每张图的原始宽高动态计算：
-   * 缩略图块按原图比例定高（原图比例如实呈现、不裁切），行高取该行两个单元格的
-   * 较大者 + 列间距；虚拟滚动按行偏移前缀和定位。
+   * 行布局只跟随容器宽度：占位一律正方形，横竖照片的显示面积相当，
+   * 行高 = 方格边长 + 信息行 + 列间距，对所有行一致；虚拟滚动按行号直接换算。
    */
-  const rowLayout = useMemo(() => {
-    const cellWidth =
-      containerSize.width > 0 ? (containerSize.width - GRID_GAP) / 2 : FALLBACK_CELL_WIDTH;
-    const rowCount = Math.ceil(visibleEntries.length / 2);
-    const offsets = new Array<number>(rowCount);
-    let cursor = 0;
-    for (let row = 0; row < rowCount; row += 1) {
-      offsets[row] = cursor;
-      cursor +=
-        Math.max(
-          cellHeightOf(visibleEntries[row * 2], cellWidth),
-          cellHeightOf(visibleEntries[row * 2 + 1], cellWidth),
-        ) + GRID_GAP;
-    }
-    return { offsets, totalHeight: cursor };
-  }, [containerSize.width, visibleEntries]);
-
-  const { offsets: rowOffsets, totalHeight } = rowLayout;
-  const startRow = Math.max(0, rowOffsets.length > 0 ? findRowAt(rowOffsets, scrollTop) - 1 : 0);
+  const cellWidth =
+    containerSize.width > 0 ? (containerSize.width - GRID_GAP) / 2 : FALLBACK_CELL_WIDTH;
+  const rowHeight = cellWidth + INFO_HEIGHT + GRID_GAP;
+  const rowCount = Math.ceil(visibleEntries.length / 2);
+  const totalHeight = rowCount * rowHeight;
   const visibleHeight = containerSize.height || 600;
-  const endRow =
-    rowOffsets.length > 0
-      ? Math.min(rowOffsets.length, findRowAfter(rowOffsets, scrollTop + visibleHeight) + 1)
-      : 0;
+  const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - 1);
+  const endRow = Math.min(rowCount, Math.floor((scrollTop + visibleHeight) / rowHeight) + 2);
   const startIndex = startRow * 2;
   const endIndex = Math.min(visibleEntries.length, endRow * 2);
   const slice = visibleEntries.slice(startIndex, endIndex);
@@ -282,19 +219,18 @@ export function CoContentPanel() {
         >
           <div
             className={cn(
-              // 高度由原始宽高推导（aspect-ratio）：原图比例如实呈现，不裁切
-              'relative overflow-hidden rounded-sm border bg-muted/40 transition-colors',
+              // 占位正方形：照片完整显示、留白不裁切，横竖图显示面积相当
+              'relative aspect-square overflow-hidden rounded-sm border bg-muted/40 transition-colors',
               isSelected
                 ? 'border-primary ring-1 ring-primary/40'
                 : 'border-border/70 group-hover:border-primary/40',
             )}
-            style={{ aspectRatio: thumbRatio(entry) }}
           >
             {thumbUrl ? (
               <img
                 src={thumbUrl}
                 alt={entry.name}
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain"
                 draggable={false}
               />
             ) : (
@@ -416,15 +352,6 @@ export function CoContentPanel() {
               </div>
             </div>
           </div>
-        ) : folderPath ? (
-          <div className="flex shrink-0 items-center border-b border-border/80 px-3 py-2">
-            <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-              {baseName(folderPath)} ·{' '}
-              {visibleEntries.length === entries.length
-                ? `${entries.length} 张图片`
-                : `${visibleEntries.length} / ${entries.length} 张图片`}
-            </p>
-          </div>
         ) : null}
 
         {status === 'idle' || status === 'invalid' ? (
@@ -448,7 +375,7 @@ export function CoContentPanel() {
                   className="grid grid-cols-2 gap-2"
                   style={{
                     position: 'absolute',
-                    top: rowOffsets[startRow] ?? 0,
+                    top: startRow * rowHeight,
                     left: 0,
                     right: 0,
                   }}
@@ -459,6 +386,18 @@ export function CoContentPanel() {
             )}
           </div>
         )}
+
+        {/* 信息行放在面板最下方：文件夹名 · 图片数（筛选 / 隐藏生效时为命中数 / 总数） */}
+        {folderPath ? (
+          <div className="flex shrink-0 items-center border-t border-border/80 px-3 py-2">
+            <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+              {baseName(folderPath)} ·{' '}
+              {visibleEntries.length === entries.length
+                ? `${entries.length} 张图片`
+                : `${visibleEntries.length} / ${entries.length} 张图片`}
+            </p>
+          </div>
+        ) : null}
       </div>
     </TooltipProvider>
   );
