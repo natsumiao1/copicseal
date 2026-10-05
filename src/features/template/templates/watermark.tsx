@@ -230,9 +230,9 @@ export const WATERMARK_TEMPLATE: RegisteredTemplate = defineTemplate({
     tags: ['水印', '平铺'],
   },
   fields: watermarkFields,
-  // 模板自带整图，默认不再叠加外框背景
+  // 默认背景统一为照片模糊（产品默认值），水印整图内嵌其中
   backgroundDefaults: {
-    mode: 'none',
+    mode: 'image',
   },
   component: Watermark,
 });

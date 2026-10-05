@@ -13,7 +13,7 @@ export const TEMPLATE_BACKGROUND_FIELDS = [
     label: '背景模式',
     description: '无背景时画框贴合模板；有背景时画框等于目标尺寸，模板内嵌其中。',
     type: 'select',
-    default: 'none',
+    default: 'image',
     options: [
       { label: '无背景', value: 'none' },
       { label: '纯色背景', value: 'color' },
@@ -87,7 +87,7 @@ export function resolveTemplateBackground(
   return normalizeParams({ fields: TEMPLATE_BACKGROUND_FIELDS }, defaults) as TemplateBackground;
 }
 
-/** 框架兜底背景：无背景。 */
+/** 框架兜底背景：照片模糊。 */
 export const DEFAULT_TEMPLATE_BACKGROUND = resolveTemplateBackground();
 
 /**

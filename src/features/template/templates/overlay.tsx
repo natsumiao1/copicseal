@@ -421,9 +421,9 @@ export const OVERLAY_TEMPLATE: RegisteredTemplate = defineTemplate({
     tags: ['叠字', '九宫格', '品牌'],
   },
   fields: overlayFields,
-  // 信息直接叠在图片上，画布与图片等宽，不需要额外背景
+  // 默认背景统一为照片模糊（产品默认值），信息直接叠在图片上
   backgroundDefaults: {
-    mode: 'none',
+    mode: 'image',
   },
   component: Overlay,
 });

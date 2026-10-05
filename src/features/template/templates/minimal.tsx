@@ -124,9 +124,9 @@ export const MINIMAL_TEMPLATE: RegisteredTemplate = defineTemplate({
     tags: ['极简', 'EXIF'],
   },
   fields: minimalFields,
-  // 极简排版配一圈纯色留白，导出时目标尺寸会被完整保留
+  // 默认背景统一为照片模糊（产品默认值），留白比例保持 0.06
   backgroundDefaults: {
-    mode: 'color',
+    mode: 'image',
     color: '#ffffff',
     paddingHorizontal: 0.06,
     paddingVertical: 0.06,

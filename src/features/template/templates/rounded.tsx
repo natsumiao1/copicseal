@@ -283,9 +283,9 @@ export const ROUNDED_TEMPLATE: RegisteredTemplate = defineTemplate({
     tags: ['无框', '圆角', '品牌'],
   },
   fields: roundedFields,
-  // 模板自身没有边框也没有底色，默认不再叠加背景
+  // 默认背景统一为照片模糊（产品默认值）
   backgroundDefaults: {
-    mode: 'none',
+    mode: 'image',
   },
   component: Rounded,
 });

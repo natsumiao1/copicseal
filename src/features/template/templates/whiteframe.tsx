@@ -266,9 +266,9 @@ export const WHITE_FRAME_TEMPLATE: RegisteredTemplate = defineTemplate({
     tags: ['相框', '品牌', '信息条'],
   },
   fields: whiteFrameFields,
-  // 卡片自身就是相框，默认不再叠加背景
+  // 默认背景统一为照片模糊（产品默认值），卡片作为画布内嵌其中
   backgroundDefaults: {
-    mode: 'none',
+    mode: 'image',
   },
   component: WhiteFrame,
 });

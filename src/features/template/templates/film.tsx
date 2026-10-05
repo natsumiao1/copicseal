@@ -141,9 +141,9 @@ export const FILM_TEMPLATE: RegisteredTemplate = defineTemplate({
     tags: ['胶片', '边框'],
   },
   fields: filmFields,
-  // 模板自身已经有边框，默认不再叠加背景
+  // 默认背景统一为照片模糊（产品默认值），胶片边框内嵌其中
   backgroundDefaults: {
-    mode: 'none',
+    mode: 'image',
   },
   component: Film,
 });
