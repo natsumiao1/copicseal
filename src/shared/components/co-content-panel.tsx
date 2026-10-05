@@ -1,13 +1,12 @@
-import { FolderOpen, Images, Loader2, RefreshCw, X } from 'lucide-react';
+import { FolderOpen, Images, Loader2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useCollagePhotoImport } from '@/features/collage/hooks/use-collage-photo-import';
-import { useCollageStore } from '@/features/collage/store/use-collage-store';
-import { openDirectoryDialog, pathExists, platform, toNativeFileUrl } from '@/platform';
+import { pathExists, platform, toNativeFileUrl } from '@/platform';
 import type { FolderImageFile } from '@/platform/contracts';
 import { useElementSize } from '@/shared/hooks/use-element-size';
+import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import { cn } from '@/shared/lib/utils';
-import { Button } from '@/shared/ui/button';
+import { useFileSourceStore } from '@/shared/store/use-file-source-store';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/shared/ui/tooltip';
 
 /** 网格列间距（对应 `gap-2`）。容器 `px-2` 的内边距不计入 contentRect，无需参与计算。 */
@@ -83,21 +82,26 @@ function findRowAfter(offsets: number[], y: number): number {
   return low;
 }
 
-type BrowseStatus = 'idle' | 'checking' | 'ready' | 'invalid';
+type ContentStatus = 'idle' | 'checking' | 'ready' | 'invalid';
 
 /**
- * 图片预览栏（文件夹直览）：枚举当前文件夹的图片，按需生成缩略图，
- * 点击加入会话并设为当前图片，拖拽送入画布槽位；「移除」仅会话内隐藏。
+ * 内容边栏（文件夹直览，全局文件来源）：枚举当前文件夹的图片，按需生成缩略图，
+ * 点击加入全局素材会话并设为当前图片，拖拽可送入拼图画布槽位；「移除」仅列表内隐藏。
+ *
+ * 本栏是停靠布局里的「内容」面板：标题由 tab 条承担，表头只保留信息行
+ * （文件夹名 · 图片数 / 导入进度）；目录切换只走文件夹树，不设刷新 / 打开文件夹入口。
  */
-export function CollageBrowsePanel() {
-  const folderPath = useCollageStore((state) => state.folderPath);
-  const removedPaths = useCollageStore((state) => state.removedPaths);
-  const openFolder = useCollageStore((state) => state.openFolder);
-  const hideEntry = useCollageStore((state) => state.hideEntry);
-  const { selectByPath } = useCollagePhotoImport();
-  const { currentPhoto: sessionPhoto } = usePhotos();
+export function CoContentPanel() {
+  const folderPath = useFileSourceStore((state) => state.folderPath);
+  const removedPaths = useFileSourceStore((state) => state.removedPaths);
+  const hideEntry = useFileSourceStore((state) => state.hideEntry);
+  const { selectByPath } = usePhotoImportByPath();
+  const { currentPhoto: sessionPhoto, importState } = usePhotos();
 
-  const [status, setStatus] = useState<BrowseStatus>('idle');
+  const importProgress =
+    importState.total > 0 ? Math.min((importState.current / importState.total) * 100, 100) : 0;
+
+  const [status, setStatus] = useState<ContentStatus>('idle');
   const [entries, setEntries] = useState<FolderImageFile[]>([]);
   const [thumbs, setThumbs] = useState<Map<string, string>>(() => new Map());
   const [cacheDir, setCacheDir] = useState<string | null>(null);
@@ -106,7 +110,7 @@ export function CollageBrowsePanel() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const containerSize = useElementSize(containerRef);
   const pendingThumbRef = useRef(new Set<string>());
-  // 代际号：切换文件夹 / 刷新后让仍在轮询旧缩略图的异步任务作废
+  // 代际号：切换文件夹后让仍在轮询旧缩略图的异步任务作废
   const generationRef = useRef(0);
   // 枚举请求序号：快速切换文件夹时丢弃过期响应
   const requestRef = useRef(0);
@@ -121,13 +125,13 @@ export function CollageBrowsePanel() {
           setCacheDir(config.cache.directory);
         }
       })
-      .catch((error) => console.warn('[collage] 读取缓存目录失败:', error));
+      .catch((error) => console.warn('[file-source] 读取缓存目录失败:', error));
     return () => {
       cancelled = true;
     };
   }, []);
 
-  /** 枚举当前文件夹：只读路径，不复制原文件。手动刷新复用同一入口。 */
+  /** 枚举当前文件夹：只读路径，不复制原文件。切换文件夹由 `folderPath` 变化触发。 */
   const loadFolder = useCallback(async () => {
     if (!folderPath) {
       setStatus('idle');
@@ -164,7 +168,7 @@ export function CollageBrowsePanel() {
       }
       setStatus('ready');
     } catch (error) {
-      console.warn('[collage] 枚举文件夹失败:', folderPath, error);
+      console.warn('[file-source] 枚举文件夹失败:', folderPath, error);
       if (request === requestRef.current) {
         setStatus('invalid');
       }
@@ -243,7 +247,7 @@ export function CollageBrowsePanel() {
           }
         }
       } catch (error) {
-        console.warn('[collage] 生成直览缩略图失败:', path, error);
+        console.warn('[file-source] 生成直览缩略图失败:', path, error);
       } finally {
         pendingThumbRef.current.delete(path);
       }
@@ -263,14 +267,6 @@ export function CollageBrowsePanel() {
       void ensureThumb(path, generation);
     }
   }, [ensureThumb, pendingVisible]);
-
-  const handleOpenFolder = useCallback(async () => {
-    const selected = await openDirectoryDialog();
-    if (!selected || Array.isArray(selected)) {
-      return;
-    }
-    openFolder(selected);
-  }, [openFolder]);
 
   const selectedId = sessionPhoto?.id ?? null;
 
@@ -363,13 +359,9 @@ export function CollageBrowsePanel() {
           <div>
             <p className="text-xs font-medium text-foreground">文件夹不存在或无法访问</p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              可能已被移动或删除，请重新选择文件夹。
+              可能已被移动或删除，请在文件夹栏重新选择。
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => void handleOpenFolder()}>
-            <FolderOpen data-icon="inline-start" />
-            打开文件夹
-          </Button>
         </div>
       );
     }
@@ -390,17 +382,13 @@ export function CollageBrowsePanel() {
       <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
         <FolderOpen className="size-7 text-primary" />
         <div>
-          <p className="text-xs font-medium text-foreground">打开一个文件夹</p>
+          <p className="text-xs font-medium text-foreground">选择一个文件夹</p>
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            直接浏览文件夹里的图片，拖入画布即可拼图。
+            在左侧文件夹栏展开一个目录，点击图片加入素材，
             <br />
-            使用时才会复制到缓存，原文件保持不动。
+            拼图页里可直接拖入画布；使用时才会复制到缓存，原文件保持不动。
           </p>
         </div>
-        <Button size="sm" onClick={() => void handleOpenFolder()}>
-          <FolderOpen data-icon="inline-start" />
-          打开文件夹
-        </Button>
       </div>
     );
   };
@@ -408,35 +396,29 @@ export function CollageBrowsePanel() {
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col bg-card">
-        <div className="flex shrink-0 items-center gap-2 border-b border-border/80 px-3 py-2">
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate text-xs font-semibold">
-              {folderPath ? baseName(folderPath) : '图片'}
-            </h2>
-            {folderPath ? (
-              <p className="truncate text-[10px] text-muted-foreground">
-                {visibleEntries.length} 张图片
+        {importState.active ? (
+          <div className="flex shrink-0 items-center gap-2 border-b border-border/80 px-3 py-2">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+              <p className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
+                导入 {importState.current} / {importState.total}
+                {importState.currentName ? ` · ${importState.currentName}` : ''}
               </p>
-            ) : null}
+              <div className="h-1 w-14 shrink-0 overflow-hidden rounded-full bg-border/60">
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+                  style={{ width: `${importProgress}%` }}
+                />
+              </div>
+            </div>
           </div>
-          <button
-            type="button"
-            aria-label="刷新目录"
-            className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-            disabled={!folderPath || status === 'checking'}
-            onClick={() => void loadFolder()}
-          >
-            <RefreshCw className={cn('size-3.5', status === 'checking' && 'animate-spin')} />
-          </button>
-          <button
-            type="button"
-            aria-label="打开文件夹"
-            className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            onClick={() => void handleOpenFolder()}
-          >
-            <FolderOpen className="size-3.5" />
-          </button>
-        </div>
+        ) : folderPath ? (
+          <div className="flex shrink-0 items-center border-b border-border/80 px-3 py-2">
+            <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+              {baseName(folderPath)} · {visibleEntries.length} 张图片
+            </p>
+          </div>
+        ) : null}
 
         {status === 'idle' || status === 'invalid' ? (
           <div className="min-h-0 flex-1">{renderEmpty()}</div>

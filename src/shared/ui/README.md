@@ -41,7 +41,12 @@ pnpm exec shadcn add <component> --diff <file>   # 升级前看逐行差异
 | `tooltip.tsx` | **整文件是本地实现，不是 registry 版本**：`delayDuration` 默认 `120`（registry 为 `0`）、`TooltipContent` 默认 `side='right'` / `sideOffset={10}`、样式用 `bg-popover` + `border` + `text-popover-foreground`，去掉了 registry 的箭头、`data-slot` 与深色气泡样式 | 素材面板的提示要浅色气泡、右侧出现、延迟稍长以免划过时闪烁 | [template-page.tsx:145](../../features/template/components/template-page.tsx#L145) 起的素材面板与素材列表提示 |
 | `toaster.tsx` | 保留旧版 sonner 包装（`className="toaster group"` + `group-[.toaster]:*` 类名），当前 registry 已不再提供该文件 | 当前 registry 对应的是 `sonner.tsx`（依赖 `next-themes`），迁移会牵动主题来源，暂不在本次范围内 | [app.tsx:14](../../app/app.tsx#L14)、[app.tsx:121](../../app/app.tsx#L121) 全局 toast 容器 |
 
-`accordion.tsx`、`avatar.tsx`、`dropdown-menu.tsx` 全仓库无引用，已于 2026-10-02 删除。
+`accordion.tsx`、`avatar.tsx` 全仓库无引用，已于 2026-10-02 删除；
+`dropdown-menu.tsx` 亦于 2026-10-02 删除，2026-10-04 因顶栏「视图」菜单（勾选停靠面板显隐）
+重新安装，仅执行上文安装收尾第 1 条（`cn` 导入替换回 `@/shared/lib/utils`）+ 第 3 条（`pnpm check`），
+其余与上游一致。
+`resizable.tsx` 全仓库无引用，已于 2026-10-05 删除（其唯一依赖 `react-resizable-panels` 一并从
+`package.json` 移除）；需要分栏时再按第一节重新安装。
 
 ## 三、上游更新记录
 
@@ -50,6 +55,7 @@ pnpm exec shadcn add <component> --diff <file>   # 升级前看逐行差异
 | 2026-10-02 | `switch.tsx` | 新增 `group-has-[:focus-visible]/field-label:border-transparent`、`group-has-[:focus-visible]/field-label:ring-0`；删除 `'use client'` | 已同步（该类只在使用 shadcn `Field`/`FieldLabel` 时生效，本项目尚未使用 `Field`，属对齐上游的惰性类）；`'use client'` 按本目录约定不再引入 |
 | 2026-10-02 | `radio-group.tsx` | `RadioGroupItem` 新增 `group-has-[:focus-visible]/field-label:ring-0`、`group-has-[:focus-visible]/field-label:not-data-checked:border-input`、`group-has-[:focus-visible]/field-label:data-checked:border-primary` | 已同步（同上） |
 | 2026-10-02 | `accordion.tsx`、`avatar.tsx`、`dropdown-menu.tsx` | 组件本身与上游一致，但全仓库无引用 | 已删除，减少后续升级的核对量 |
+| 2026-10-04 | `dropdown-menu.tsx`（重新安装） | 重新安装以承载顶栏「视图」菜单（`CoTopNav` 勾选四块停靠面板显隐） | 按安装收尾执行 `cn` 导入替换与 `pnpm check`，组件源码与上游一致 |
 | 2026-10-02 | `tabs.tsx` | 上游新增 `'use client'` | 不同步，按本目录约定本项目不加 RSC 指令 |
 | 2026-10-02 | `dialog.tsx`、`input.tsx`、`resizable.tsx`、`select.tsx` | 与上游一致 | 无需处理 |
 | 2026-10-03 | `slider.tsx` | 之前把 Thumb 的 key 从 `key={index}` 改成了 `key={`thumb-${值}-${个数}`}` | **已回退**：thumb 的身份只跟顺序有关，而值会在拖动时不断变化，用值做 key 等于每次改动都换掉 DOM 节点，滑块按住一拖就断，只能动一次。现在与上游一致地用下标（配一句 `biome-ignore` 说明），并留了注释防止再被改回去 |

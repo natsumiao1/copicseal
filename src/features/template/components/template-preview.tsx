@@ -149,7 +149,11 @@ export function TemplatePreview({
         <LayoutTemplate className="size-14 text-primary" />
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">边框水印预览</h1>
-          <p className="mt-2 text-sm leading-6">选择一张图片后，这里会显示真实模板渲染结果。</p>
+          <p className="mt-2 text-sm leading-6">
+            从左侧文件来源点选一张图片，或直接把图片拖进来，
+            <br />
+            这里会显示真实模板渲染结果。
+          </p>
         </div>
       </div>
     );

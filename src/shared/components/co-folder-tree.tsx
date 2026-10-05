@@ -1,15 +1,9 @@
-import { ChevronRight, Clock, Folder, FolderOpen, HardDrive, Home } from 'lucide-react';
+import { ChevronRight, Clock, Folder, FolderOpen, HardDrive, Home, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import { platform } from '@/platform';
 import type { DirectoryNode } from '@/platform/contracts';
 import { cn } from '@/shared/lib/utils';
-
-interface CollageFolderTreeProps {
-  /** 当前打开的直览文件夹（选中态） */
-  selectedPath: string | null;
-  onSelect: (path: string) => void;
-}
+import { useFileSourceStore } from '@/shared/store/use-file-source-store';
 
 interface TreeRoot {
   label: string;
@@ -57,11 +51,22 @@ function ancestorPaths(path: string): string[] {
 }
 
 /**
- * 文件夹树：根节点为「最近使用 / 用户主目录 / 外接磁盘」，展开时按需枚举子目录，
- * 不做递归扫描。选中目录驱动右侧图片预览栏加载。
+ * 文件夹树（文件夹边栏）：根节点为「最近使用 / 用户主目录 / 外接磁盘」，
+ * 展开时按需枚举子目录，不做递归扫描。选中目录驱动右侧内容边栏加载。
+ *
+ * 文件来源是全局通用能力：当前文件夹与最近使用列表都来自 `useFileSourceStore`，
+ * 拼图与边框水印共用同一棵树。本栏是停靠布局里的「文件夹」面板，标题、移动、
+ * 合并与关闭统一由面板 tab 条承担，这里不再自设表头。
+ *
+ * 行尾提供收藏星标：收藏 / 取消收藏的是文件夹本身，收藏项在同组的「收藏夹」
+ * tab 里集中展示（不收藏文件）。
  */
-export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeProps) {
-  const recentFolders = useCollageStore((state) => state.recentFolders);
+export function CoFolderTree() {
+  const folderPath = useFileSourceStore((state) => state.folderPath);
+  const recentFolders = useFileSourceStore((state) => state.recentFolders);
+  const favoriteFolders = useFileSourceStore((state) => state.favoriteFolders);
+  const openFolder = useFileSourceStore((state) => state.openFolder);
+  const toggleFavoriteFolder = useFileSourceStore((state) => state.toggleFavoriteFolder);
   const [rootNodes, setRootNodes] = useState<TreeRoot[]>([]);
   const [tree, setTree] = useState<TreeState>(() => ({
     expanded: new Set<string>(),
@@ -88,7 +93,7 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
           })),
         );
       })
-      .catch((error) => console.warn('[collage] 枚举根目录失败:', error));
+      .catch((error) => console.warn('[file-source] 枚举根目录失败:', error));
     return () => {
       cancelled = true;
     };
@@ -113,7 +118,7 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
         });
       })
       .catch((error) => {
-        console.warn('[collage] 枚举子目录失败:', path, error);
+        console.warn('[file-source] 枚举子目录失败:', path, error);
         setTree((prev) => {
           const loading = new Set(prev.loading);
           loading.delete(path);
@@ -160,12 +165,12 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
 
   // 选中目录不在可见链上时（重启恢复、从最近列表点入），逐级展开祖先让它出现在树里
   useEffect(() => {
-    if (!selectedPath) {
+    if (!folderPath) {
       return;
     }
     let cancelled = false;
     void (async () => {
-      for (const ancestor of ancestorPaths(selectedPath)) {
+      for (const ancestor of ancestorPaths(folderPath)) {
         if (cancelled) {
           return;
         }
@@ -175,7 +180,7 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
     return () => {
       cancelled = true;
     };
-  }, [expand, selectedPath]);
+  }, [expand, folderPath]);
 
   const roots = useMemo(() => {
     const homeRoots = rootNodes.filter((root) => root.kind === 'home');
@@ -218,15 +223,42 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
     );
   };
 
+  /**
+   * 行尾收藏星标：未收藏时只在 hover 该行时浮现，已收藏常显填充星。
+   * 星标与行内选中按钮是同级兄弟，点击不会触发目录选中。
+   */
+  const renderFavorite = (path: string) => {
+    const isFavorite = favoriteFolders.includes(path);
+
+    return (
+      <button
+        type="button"
+        aria-label={isFavorite ? '取消收藏该文件夹' : '收藏该文件夹'}
+        title={isFavorite ? '取消收藏' : '收藏'}
+        className={cn(
+          'ml-auto flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-opacity hover:text-foreground',
+          isFavorite
+            ? 'opacity-100'
+            : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
+        )}
+        onClick={() => {
+          toggleFavoriteFolder(path);
+        }}
+      >
+        <Star className={cn('size-3', isFavorite && 'fill-current text-amber-500')} />
+      </button>
+    );
+  };
+
   const rowClass = (isSelected: boolean) =>
     cn(
-      'flex h-7 items-center gap-1 pr-2 text-xs transition-colors',
+      'group flex h-7 items-center gap-1 pr-2 text-xs transition-colors',
       isSelected ? 'bg-primary/12 text-primary' : 'text-foreground/90 hover:bg-muted/60',
     );
 
   const renderNode = (node: DirectoryNode, depth: number) => {
     const isExpanded = tree.expanded.has(node.path);
-    const isSelected = selectedPath === node.path;
+    const isSelected = folderPath === node.path;
 
     return (
       <div key={node.path}>
@@ -239,7 +271,7 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
               if (!isExpanded) {
                 expand(node.path);
               }
-              onSelect(node.path);
+              openFolder(node.path);
             }}
           >
             {isExpanded ? (
@@ -249,6 +281,7 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
             )}
             <span className="truncate">{node.name}</span>
           </button>
+          {renderFavorite(node.path)}
         </div>
         {isExpanded && tree.cache.get(node.path)?.map((child) => renderNode(child, depth + 1))}
       </div>
@@ -257,9 +290,6 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
-      <div className="shrink-0 border-b border-border/80 px-3 py-2">
-        <h2 className="text-xs font-semibold">文件夹</h2>
-      </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1.5">
         {roots.length === 0 ? (
           <p className="px-2 py-3 text-[11px] text-muted-foreground">正在读取根目录…</p>
@@ -270,7 +300,7 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
                 {section.title}
               </p>
               {section.items.map((root) => {
-                const isSelected = selectedPath === root.path;
+                const isSelected = folderPath === root.path;
                 const RootIcon =
                   root.kind === 'recent' ? Clock : root.kind === 'home' ? Home : HardDrive;
 
@@ -285,7 +315,7 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
                           if (!tree.expanded.has(root.path)) {
                             expand(root.path);
                           }
-                          onSelect(root.path);
+                          openFolder(root.path);
                         }}
                       >
                         <RootIcon
@@ -296,6 +326,7 @@ export function CollageFolderTree({ selectedPath, onSelect }: CollageFolderTreeP
                         />
                         <span className="truncate">{root.label}</span>
                       </button>
+                      {renderFavorite(root.path)}
                     </div>
                     {tree.expanded.has(root.path) &&
                       tree.cache.get(root.path)?.map((child) => renderNode(child, 1))}

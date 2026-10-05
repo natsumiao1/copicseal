@@ -3,24 +3,21 @@ import { useEffect, useRef } from 'react';
 import { prepareElementForSnapshot } from '@/core/renderer';
 import { runScheduledExports } from '@/core/scheduler';
 import { collectAdaptivePhotoIds } from '@/features/collage/adaptive';
-import { CollageBrowsePanel } from '@/features/collage/components/collage-browse-panel';
-import { CollageFolderTree } from '@/features/collage/components/collage-folder-tree';
 import { useCollageHistoryShortcuts } from '@/features/collage/hooks/use-collage-history-shortcuts';
-import { useCollagePhotoImport } from '@/features/collage/hooks/use-collage-photo-import';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
-import { exportSingle, platform, resolveExportDirectory } from '@/platform';
+import { exportSingle, resolveExportDirectory } from '@/platform';
+import { CoFileSourceWorkbench } from '@/shared/components/co-file-source-workbench';
 import {
   notifyExportedDirectory,
   notifyExportFailed,
 } from '@/shared/components/co-open-directory-link';
 import { CoWindowHeader } from '@/shared/components/co-window-header';
+import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import {
-  BusinessWorkbench,
   BusinessWorkbenchPropertiesPane,
   BusinessWorkbenchWorkspace,
 } from '@/shared/layouts/business-workbench';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/shared/ui/resizable';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { CollageCanvas, CollagePropertiesPanel, CollageToolbar } from '../exports';
 
@@ -35,30 +32,6 @@ function CollageHeader() {
       description="布局编辑与导出"
       actions={<CollageToolbar />}
     />
-  );
-}
-
-/** 左侧素材区：文件夹树 + 图片预览栏（文件夹直览）。 */
-function CollageLeftRail() {
-  const folderPath = useCollageStore((state) => state.folderPath);
-  const openFolder = useCollageStore((state) => state.openFolder);
-
-  return (
-    <ResizablePanelGroup orientation="horizontal" className="h-full min-h-0 min-w-0">
-      <ResizablePanel
-        defaultSize={200}
-        minSize={150}
-        maxSize={320}
-        className="min-h-0 min-w-0"
-        style={{ overflow: 'hidden' }}
-      >
-        <CollageFolderTree selectedPath={folderPath} onSelect={openFolder} />
-      </ResizablePanel>
-      <ResizableHandle withHandle />
-      <ResizablePanel minSize={180} className="min-h-0 min-w-0" style={{ overflow: 'hidden' }}>
-        <CollageBrowsePanel />
-      </ResizablePanel>
-    </ResizablePanelGroup>
   );
 }
 
@@ -85,7 +58,7 @@ export function CollagePage() {
   const { photos } = usePhotos();
   const restorePending = useCollageStore((state) => state.restorePending);
   const setRestorePending = useCollageStore((state) => state.setRestorePending);
-  const { ensureByPath } = useCollagePhotoImport();
+  const { ensureByPath } = usePhotoImportByPath();
   // 撤销/重做快捷键：随拼图页挂载/卸载，避免在其他页面误拦 Cmd+Z
   useCollageHistoryShortcuts();
 
@@ -182,9 +155,9 @@ export function CollagePage() {
   };
 
   return (
-    <BusinessWorkbench
+    <CoFileSourceWorkbench
+      routeKey="/collage"
       header={<CollageHeader />}
-      leftRail={platform.capabilities.files.folderBrowse ? <CollageLeftRail /> : undefined}
       workspace={
         <BusinessWorkbenchWorkspace>
           <CollageCanvas previewRef={previewRef} />

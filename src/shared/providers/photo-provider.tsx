@@ -5,19 +5,14 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useState,
 } from 'react';
 import { releaseSessionAssets, trackSessionAssets } from '@/platform/services/asset-service';
-import {
-  type ImportProgressSnapshot,
-  processDroppedFiles,
-  selectPhotosFromDirectory,
-  selectPhotosViaDialog,
-} from '@/shared/lib/import-photo';
-import { usePageActive } from '@/shared/providers/page-activity-provider';
+import { type ImportProgressSnapshot, processDroppedFiles } from '@/shared/lib/import-photo';
 import type { ImportedPhoto } from '@/shared/types/photo';
 
-type PhotoImportSource = 'dialog' | 'directory' | 'drop';
+type PhotoImportSource = 'drop';
 
 interface PhotoImportState {
   active: boolean;
@@ -37,15 +32,30 @@ interface PhotoContextValue {
   removePhoto: (id: string) => void;
   replacePhoto: (id: string, nextPhoto: ImportedPhoto) => void;
   setCurrentIndex: (index: number) => void;
-  importViaDialog: () => Promise<void>;
-  importViaDirectory: () => Promise<void>;
   importViaDrop: (files: FileList | File[]) => Promise<void>;
 }
 
 export const PhotoContext = createContext<PhotoContextValue | null>(null);
 
-export const PhotoProvider: FC<{ children: ReactNode }> = ({ children }) => {
-  const pageActive = usePageActive();
+interface PhotoProviderProps {
+  children: ReactNode;
+  /**
+   * 宿主功能页是否可见。
+   *
+   * 素材会话已上提到应用层（全局唯一一份），而功能页仍常驻挂载，因此必须显式
+   * 区分「挂载」与「激活」：宿主不可见时不接管全局拖放与粘贴，否则后台功能会
+   * 抢走前台操作（例如在设置页拖入图片却被素材库静默收下）。
+   */
+  active?: boolean;
+}
+
+/**
+ * 全局素材会话：应用内唯一一份照片列表。
+ *
+ * 边框水印与拼图共用它——切换功能时带着同一批照片走，文件来源面板点选的图片
+ * 也进这里。拖放、粘贴与按路径懒导入都写入同一份会话。
+ */
+export const PhotoProvider: FC<PhotoProviderProps> = ({ children, active = true }) => {
   const sessionId = useId();
   const [photos, setPhotos] = useState<ImportedPhoto[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -136,34 +146,6 @@ export const PhotoProvider: FC<{ children: ReactNode }> = ({ children }) => {
     }));
   }, []);
 
-  const importViaDialog = useCallback(async () => {
-    startImport('dialog');
-    const result = await selectPhotosViaDialog({
-      onProgress: (progress) => updateImportProgress('dialog', progress),
-      onPhotoImported: (photo) => addPhotos([photo]),
-      onPhotoUpdated: updatePhoto,
-    });
-    if (!result.length) {
-      finishImport('dialog');
-      return;
-    }
-    finishImport('dialog');
-  }, [addPhotos, finishImport, startImport, updateImportProgress, updatePhoto]);
-
-  const importViaDirectory = useCallback(async () => {
-    startImport('directory');
-    const result = await selectPhotosFromDirectory({
-      onProgress: (progress) => updateImportProgress('directory', progress),
-      onPhotoImported: (photo) => addPhotos([photo]),
-      onPhotoUpdated: updatePhoto,
-    });
-    if (!result.length) {
-      finishImport('directory');
-      return;
-    }
-    finishImport('directory');
-  }, [addPhotos, finishImport, startImport, updateImportProgress, updatePhoto]);
-
   const importViaDrop = useCallback(
     async (files: FileList | File[]) => {
       startImport('drop');
@@ -182,8 +164,8 @@ export const PhotoProvider: FC<{ children: ReactNode }> = ({ children }) => {
   );
 
   useEffect(() => {
-    // 隐藏页不再监听文件拖放：页面常驻挂载后，否则两个功能页会同时响应同一次拖入。
-    if (!pageActive) {
+    // 宿主功能页不可见时不监听文件拖放：页面常驻挂载，否则后台功能会响应前台的拖入。
+    if (!active) {
       setIsDraggingOver(false);
       return;
     }
@@ -223,7 +205,7 @@ export const PhotoProvider: FC<{ children: ReactNode }> = ({ children }) => {
       }
       event.preventDefault();
       setIsDraggingOver(false);
-      // 空态 CoDropZone 会 stopPropagation 并自行导入，这里兜住其余区域
+      // 没有专门的落点区域：任何位置拖入都进全局素材会话
       void importViaDrop(files);
     };
 
@@ -238,28 +220,59 @@ export const PhotoProvider: FC<{ children: ReactNode }> = ({ children }) => {
       window.removeEventListener('dragleave', handleDragLeave);
       window.removeEventListener('drop', handleDrop);
     };
-  }, [importViaDrop, pageActive]);
+  }, [active, importViaDrop]);
+
+  useEffect(() => {
+    // 粘贴与拖放同理：只在宿主功能页可见时接管，避免后台功能抢同一个事件。
+    if (!active) {
+      return;
+    }
+
+    const handlePaste = async (event: ClipboardEvent) => {
+      const files = event.clipboardData?.files;
+      if (files && files.length > 0) {
+        event.preventDefault();
+        await importViaDrop(files);
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+
+    return () => {
+      window.removeEventListener('paste', handlePaste);
+    };
+  }, [active, importViaDrop]);
 
   const currentPhoto = photos[currentIndex] ?? null;
 
-  return (
-    <PhotoContext.Provider
-      value={{
-        photos,
-        currentIndex,
-        currentPhoto,
-        isDraggingOver,
-        importState,
-        addPhotos,
-        removePhoto,
-        replacePhoto,
-        setCurrentIndex,
-        importViaDialog,
-        importViaDirectory,
-        importViaDrop,
-      }}
-    >
-      {children}
-    </PhotoContext.Provider>
+  // value 必须记忆：它是全部消费方的重渲染开关。不记忆的话，只要 Provider 因
+  // 自身状态或上层重渲染而重渲一次，value 就换新对象，两页素材、画布与面板
+  // 会跟着全部重渲一遍，哪怕它们读的字段一个都没变。
+  const value = useMemo(
+    () => ({
+      photos,
+      currentIndex,
+      currentPhoto,
+      isDraggingOver,
+      importState,
+      addPhotos,
+      removePhoto,
+      replacePhoto,
+      setCurrentIndex,
+      importViaDrop,
+    }),
+    [
+      photos,
+      currentIndex,
+      currentPhoto,
+      isDraggingOver,
+      importState,
+      addPhotos,
+      removePhoto,
+      replacePhoto,
+      importViaDrop,
+    ],
   );
+
+  return <PhotoContext.Provider value={value}>{children}</PhotoContext.Provider>;
 };

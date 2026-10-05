@@ -1,0 +1,148 @@
+/*
+ * dockview 停靠布局的主题覆盖：把 dockview 的设计变量对齐到项目的 Tailwind token。
+ *
+ * 选择器分工：
+ * - 变量块用 `.dockview-theme-light.co-dockview`（同元素双类），让优先级与
+ *   `dockview.css` 的引入顺序无关；主题 class 挂在 dockview 的 shell 元素上，
+ *   CSS 变量向下继承到所有面板。
+ * - 外观规则用 `.dv-shell` 前缀复刻 dockview 原选择器：shell 元素恒存在，
+ *   不依赖主题 class 是否生效，保证 tab 条 / tab / 关闭图标始终保持浅色。
+ */
+
+/* 设计变量 */
+.dockview-theme-light.co-dockview {
+  /* tab 条：高度与字号向项目侧栏表头靠拢 */
+  --dv-tabs-and-actions-container-height: 32px;
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-tab-font-size: 12px;
+
+  /* tab 条与四种状态的 tab 底色：tab 一律与 tab 条同底色、不单独上色，
+     启用中的 tab 由下方的下划线标注；拖动时 dockview 取该变量做拖影底色 */
+  --dv-tabs-and-actions-container-background-color: var(--color-card);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--color-card);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--color-card);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--color-card);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--color-card);
+
+  /* 四种状态的 tab 文字色：启用 tab 全色，其余按可见度递减 */
+  --dv-activegroup-visiblepanel-tab-color: var(--color-foreground);
+  --dv-activegroup-hiddenpanel-tab-color: color-mix(
+    in oklch,
+    var(--color-foreground) 75%,
+    transparent
+  );
+  --dv-inactivegroup-visiblepanel-tab-color: color-mix(
+    in oklch,
+    var(--color-foreground) 75%,
+    transparent
+  );
+  --dv-inactivegroup-hiddenpanel-tab-color: color-mix(
+    in oklch,
+    var(--color-foreground) 55%,
+    transparent
+  );
+  --dv-tab-divider-color: transparent;
+
+  /* 面板内容区底色；缝隙底色见下方 .dv-dockview 覆盖 */
+  --dv-group-view-background-color: var(--color-card);
+
+  /* 细缝分隔：面板间由主题 gap 留出 4px 缝，去掉 dockview 自带的分隔描边 */
+  --dv-separator-border: transparent;
+
+  /* 圆角与悬浮反馈对齐项目控件 */
+  --dv-border-radius: 6px;
+  --dv-tab-border-radius: 6px;
+  --dv-icon-hover-background-color: color-mix(in oklch, var(--color-foreground) 8%, transparent);
+
+  /* 拖动 tab 时的落点高亮 */
+  --dv-drag-over-background-color: color-mix(in oklch, var(--color-primary) 18%, transparent);
+  --dv-drag-over-border-color: var(--color-primary);
+
+  /* 面板间的拖宽把手：常态隐形，激活时显示主色 */
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: var(--color-primary);
+}
+
+/* 根容器 = 缝隙底色：相邻面板之间的细缝露出这一层 */
+.dv-shell .dv-dockview {
+  background-color: var(--color-muted, transparent);
+}
+
+/* 面板矩形区域 = 卡片色，与缝隙底色形成细细的分隔 */
+.dv-shell .dv-groupview {
+  background-color: var(--color-card, transparent);
+}
+
+/* tab 条底色，与面板内容同为卡片色 */
+.dv-shell .dv-groupview > .dv-tabs-and-actions-container {
+  background-color: var(--color-card, transparent);
+}
+
+/* 四种状态的 tab 底色：显式给卡片色，避免任何深色底 */
+.dv-shell .dv-groupview.dv-active-group
+  > .dv-tabs-and-actions-container
+  .dv-tabs-container
+  > .dv-tab,
+.dv-shell
+  .dv-groupview.dv-inactive-group
+  > .dv-tabs-and-actions-container
+  .dv-tabs-container
+  > .dv-tab {
+  background-color: var(--color-card, transparent);
+}
+
+/* 拖动中的 tab 已脱离原分组，dockview 另有一条单独规则 */
+.dv-shell .dv-tab.dv-tab-dragging {
+  background-color: var(--color-card, transparent);
+}
+
+/* 关闭图标：常态透明，hover 才给一层极浅的悬浮色 */
+.dv-shell .dv-tab .dv-default-tab .dv-default-tab-action {
+  background-color: transparent;
+}
+
+.dv-shell .dv-tab .dv-default-tab .dv-default-tab-action:hover {
+  border-radius: 2px;
+  background-color: color-mix(in oklch, var(--color-foreground, transparent) 8%, transparent);
+}
+
+/*
+ * 启用中的 tab 用下划线标注：当前分组用主色，非当前分组降透明。
+ * 复用 dockview 内置主题（dracula / monokai）的做法，画在 tab 底部的 ::after 上；
+ * `top: auto` 用于盖掉 dockview 焦点态对同一伪元素的 `top: 0`。
+ */
+.dv-shell .dv-groupview.dv-active-group
+  > .dv-tabs-and-actions-container
+  .dv-tabs-container
+  > .dv-tab.dv-active-tab::after,
+.dv-shell
+  .dv-groupview.dv-inactive-group
+  > .dv-tabs-and-actions-container
+  .dv-tabs-container
+  > .dv-tab.dv-active-tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: auto;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  z-index: 999;
+  pointer-events: none;
+}
+
+.dv-shell
+  .dv-groupview.dv-active-group
+  > .dv-tabs-and-actions-container
+  .dv-tabs-container
+  > .dv-tab.dv-active-tab::after {
+  background-color: var(--color-primary, transparent);
+}
+
+.dv-shell
+  .dv-groupview.dv-inactive-group
+  > .dv-tabs-and-actions-container
+  .dv-tabs-container
+  > .dv-tab.dv-active-tab::after {
+  background-color: color-mix(in oklch, var(--color-primary, transparent) 45%, transparent);
+}

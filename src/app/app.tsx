@@ -4,10 +4,9 @@ import { type AppRoute, navigate, normalizeRoute } from '@/app/routes';
 import CollagePage from '@/features/collage';
 import { SettingsPage } from '@/features/settings';
 import TemplatePage from '@/features/template';
-import { platformCapabilities } from '@/platform';
-import { platformRuntime } from '@/platform/providers/platform-runtime';
+import { checkForUpdate } from '@/platform';
 import { CoErrorBoundary } from '@/shared/components/co-error-boundary';
-import { CoSidebar } from '@/shared/components/co-sidebar';
+import { CoTopNav } from '@/shared/components/co-top-nav';
 import { cn } from '@/shared/lib/utils';
 import { NavigationProvider } from '@/shared/providers/navigation-provider';
 import { PageActivityProvider } from '@/shared/providers/page-activity-provider';
@@ -21,10 +20,7 @@ function renderPage(route: AppRoute) {
     return <SettingsPage />;
   }
 
-  // Template 与 Collage 各自持有独立的素材会话，因此各挂一份 PhotoProvider。
-  return (
-    <PhotoProvider>{route === '/template' ? <TemplatePage /> : <CollagePage />}</PhotoProvider>
-  );
+  return route === '/template' ? <TemplatePage /> : <CollagePage />;
 }
 
 function AppContent() {
@@ -56,13 +52,11 @@ function AppContent() {
   // 启动后静默检查一次更新：失败不打扰用户，发现新版本时提示到设置页安装，
   // 同时把待安装的更新预热给设置页使用。
   useEffect(() => {
-    if (!platformCapabilities.system.autoUpdate) return;
-
     let cancelled = false;
 
     void (async () => {
       try {
-        const update = await platformRuntime.checkForUpdate();
+        const update = await checkForUpdate();
         if (!cancelled && update) {
           toast.info(`发现新版本 ${update.version}`, {
             description: '可在「设置 → 关于」中下载并安装',
@@ -90,42 +84,49 @@ function AppContent() {
   return (
     <div
       className={cn(
-        'flex h-screen overflow-hidden bg-background text-foreground',
+        'flex h-screen flex-col overflow-hidden bg-background text-foreground',
         variant === 'win' && frameMode === 'frameless' && 'rounded-lg border border-border',
       )}
       data-window-style={variant}
       data-window-frame-mode={frameMode}
     >
-      <CoSidebar route={route} onRouteChange={handleRouteChange} />
-      <NavigationProvider onNavigate={handleRouteChange}>
-        <div className="relative min-h-0 min-w-0 flex-1">
-          {renderedRoutes.map((pageRoute) => {
-            const active = pageRoute === route;
+      {/* 功能选择（边框水印 / 拼图 / 设置）放在顶部，左侧整条让给全局文件来源面板 */}
+      <CoTopNav route={route} onRouteChange={handleRouteChange} />
+      {/*
+        素材会话全局只有一份：切功能时带着同一批照片走。
+        拖放与粘贴只在功能页可见时响应，避免在设置页误导入。
+      */}
+      <PhotoProvider active={route !== '/settings'}>
+        <NavigationProvider onNavigate={handleRouteChange}>
+          <div className="relative min-h-0 min-w-0 flex-1">
+            {renderedRoutes.map((pageRoute) => {
+              const active = pageRoute === route;
 
-            return (
-              <PageActivityProvider key={pageRoute} active={active}>
-                {/*
-                  隐藏页用 visibility 而非 display 保留布局：预览自适应、面板尺寸与滚动位置
-                  都依赖真实布局尺寸，保留布局可以让切回时不需要重新测量。
-                */}
-                <div
-                  className={cn(
-                    'absolute inset-0 h-full w-full',
-                    !active && 'pointer-events-none invisible',
-                  )}
-                  aria-hidden={!active}
-                  inert={!active}
-                >
-                  {renderPage(pageRoute)}
-                </div>
-              </PageActivityProvider>
-            );
-          })}
-        </div>
-        {/* Toaster 放在 Provider 内部：toast 的描述节点由 Toaster 渲染，上下文按渲染
-            位置解析，放外面的话里面的「更改」跳转按钮拿不到导航函数 */}
-        <Toaster />
-      </NavigationProvider>
+              return (
+                <PageActivityProvider key={pageRoute} active={active}>
+                  {/*
+                    隐藏页用 visibility 而非 display 保留布局：预览自适应、面板尺寸与滚动位置
+                    都依赖真实布局尺寸，保留布局可以让切回时不需要重新测量。
+                  */}
+                  <div
+                    className={cn(
+                      'absolute inset-0 h-full w-full',
+                      !active && 'pointer-events-none invisible',
+                    )}
+                    aria-hidden={!active}
+                    inert={!active}
+                  >
+                    {renderPage(pageRoute)}
+                  </div>
+                </PageActivityProvider>
+              );
+            })}
+          </div>
+          {/* Toaster 放在 Provider 内部：toast 的描述节点由 Toaster 渲染，上下文按渲染
+              位置解析，放外面的话里面的「更改」跳转按钮拿不到导航函数 */}
+          <Toaster />
+        </NavigationProvider>
+      </PhotoProvider>
     </div>
   );
 }
