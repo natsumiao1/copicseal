@@ -1,6 +1,12 @@
 import type { CachedImageMeta } from '@/platform/contracts';
 import type { AssetServiceContract, ImportPhotoOptions } from '@/platform/contracts/platform';
-import { platformRuntime } from '@/platform/providers/platform-runtime';
+import {
+  getConfig,
+  importImageBytesToCache,
+  importImageToCache,
+  pathExists,
+  toNativeFileUrl,
+} from '@/platform/providers/tauri/api';
 import {
   type ImportedPhoto,
   SUPPORTED_IMAGE_EXTENSIONS,
@@ -14,17 +20,6 @@ import {
   setPreviewResourceCache,
   setThumbnailCache,
 } from './cache-service';
-
-const {
-  getConfig,
-  importImageBytesToCache,
-  importImageToCache,
-  listImageFilesInDirectory,
-  openDirectoryDialog,
-  openImageDialog,
-  pathExists,
-  toNativeFileUrl,
-} = platformRuntime;
 
 function uid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -123,36 +118,6 @@ function waitForThumbnail(
 async function resolveCacheDirectory(): Promise<string> {
   const config = await getConfig();
   return config.cache.directory;
-}
-
-export async function selectPhotosViaDialog(
-  options?: ImportPhotoOptions,
-): Promise<ImportedPhoto[]> {
-  const selected = await openImageDialog();
-
-  if (!selected) {
-    return [];
-  }
-
-  const paths = Array.isArray(selected) ? selected : [selected];
-  return importPhotosViaPaths(paths, options);
-}
-
-export async function selectPhotosFromDirectory(
-  options?: ImportPhotoOptions,
-): Promise<ImportedPhoto[]> {
-  const selected = await openDirectoryDialog();
-
-  if (!selected || Array.isArray(selected)) {
-    return [];
-  }
-
-  const filePaths = await listImageFilesInDirectory(selected);
-  if (!filePaths.length) {
-    return [];
-  }
-
-  return importPhotosViaPaths(filePaths, options);
 }
 
 export async function importPhotosViaPaths(
@@ -258,8 +223,6 @@ export function getInUseAssetPaths(): string[] {
 }
 
 export class AssetService implements AssetServiceContract {
-  selectPhotosViaDialog = selectPhotosViaDialog;
-  selectPhotosFromDirectory = selectPhotosFromDirectory;
   processDroppedFiles = processDroppedFiles;
   clearAssetCaches = clearAssetCaches;
 }

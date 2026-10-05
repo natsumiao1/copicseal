@@ -15,8 +15,6 @@ import type {
 import type { ImportProgressSnapshot } from './services';
 
 export interface AssetServiceContract {
-  selectPhotosViaDialog(options?: ImportPhotoOptions): Promise<ImportedPhoto[]>;
-  selectPhotosFromDirectory(options?: ImportPhotoOptions): Promise<ImportedPhoto[]>;
   processDroppedFiles(
     files: FileList | File[],
     options?: ImportPhotoOptions,
@@ -78,8 +76,6 @@ export interface StorageServiceContract {
   listSystemFonts(): Promise<FontInfo[]>;
 }
 
-export interface StorageAdapter extends StorageServiceContract {}
-
 export interface CacheServiceContract {
   getThumbnailCache(path: string): string | null;
   setThumbnailCache(path: string, value: string): void;
@@ -95,21 +91,4 @@ export interface Platform {
   readonly files: FileServiceContract;
   readonly storage: StorageServiceContract;
   readonly cache: CacheServiceContract;
-  readonly capabilities: PlatformCapabilities;
-}
-
-export interface PlatformCapabilities {
-  image: { resize: boolean; composite: boolean; heicDecode: boolean };
-  files: {
-    pickImages: boolean;
-    saveToDirectory: boolean;
-    download: boolean;
-    folderBrowse: boolean;
-  };
-  system: { tray: boolean; openPath: boolean; autoUpdate: boolean };
-}
-
-export interface PlatformProvider {
-  readonly id: string;
-  readonly capabilities: PlatformCapabilities;
 }

@@ -1,5 +1,5 @@
 import { toast } from 'sonner';
-import { openDirectory, platformCapabilities } from '@/platform';
+import { openDirectory } from '@/platform';
 import { useAppNavigation } from '@/shared/providers/navigation-provider';
 
 /** 设置页里导出目录那一项的元素 id，跳转时靠它定位。 */
@@ -12,14 +12,8 @@ interface CoOpenDirectoryLinkProps {
 
 /**
  * 导出完成提示里的输出目录：蓝色链接，点击直接在系统文件管理器里打开。
- *
- * 平台不支持打开路径时退化成普通文本，只做展示。
  */
 export function CoOpenDirectoryLink({ directory }: CoOpenDirectoryLinkProps) {
-  if (!platformCapabilities.system.openPath) {
-    return <span className="break-all">{directory}</span>;
-  }
-
   return (
     <button
       type="button"

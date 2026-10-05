@@ -8,10 +8,13 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { AppConfig, WindowFrameMode } from '@/platform';
-import { platformRuntime } from '@/platform/providers/platform-runtime';
-
-const { applyWindowFrameMode, getConfig, updateConfig } = platformRuntime;
+import {
+  type AppConfig,
+  applyWindowFrameMode,
+  getConfig,
+  updateConfig,
+  type WindowFrameMode,
+} from '@/platform';
 
 export type WindowStyleVariant = 'mac' | 'win';
 

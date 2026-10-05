@@ -16,24 +16,18 @@ import {
   type AppConfig,
   type AppUpdateInfo,
   type CacheOverview,
-  clearAssetCaches,
-  getInUseAssetPaths,
-  platformCapabilities,
-} from '@/platform';
-import { platformRuntime } from '@/platform/providers/platform-runtime';
-
-const {
   checkForUpdate,
   cleanupCache,
+  clearAssetCaches,
   clearCache,
   getCacheOverview,
   getConfig,
+  getInUseAssetPaths,
   installUpdate,
   openDirectory,
   openDirectoryDialog,
   updateConfig,
-} = platformRuntime;
-
+} from '@/platform';
 import { CoDirectoryField } from '@/shared/components/co-directory-field';
 import { CoWindowHeader } from '@/shared/components/co-window-header';
 import { cn } from '@/shared/lib/utils';
@@ -557,43 +551,39 @@ function AboutTab() {
         </SettingField>
 
         <SettingField label="检查更新" description="检查并安装应用新版本。">
-          {platformCapabilities.system.autoUpdate ? (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  onClick={() => void handleCheckUpdate()}
-                  variant="outline"
-                  disabled={checking || installing}
-                >
-                  <RefreshCw className={cn('size-3.5', checking && 'animate-spin')} />
-                  {checking ? '检查中...' : '检查更新'}
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                onClick={() => void handleCheckUpdate()}
+                variant="outline"
+                disabled={checking || installing}
+              >
+                <RefreshCw className={cn('size-3.5', checking && 'animate-spin')} />
+                {checking ? '检查中...' : '检查更新'}
+              </Button>
+              {update ? (
+                <Button onClick={() => void handleInstallUpdate()} disabled={installing}>
+                  <Download className="size-3.5" />
+                  {installing ? '安装中...' : '下载并安装'}
                 </Button>
-                {update ? (
-                  <Button onClick={() => void handleInstallUpdate()} disabled={installing}>
-                    <Download className="size-3.5" />
-                    {installing ? '安装中...' : '下载并安装'}
-                  </Button>
-                ) : null}
-                {status ? <p className="text-xs text-muted-foreground">{status}</p> : null}
-              </div>
-              {update?.notes ? (
-                <p className="whitespace-pre-line text-xs text-muted-foreground">{update.notes}</p>
               ) : null}
-              {installing && progress !== null ? (
-                <div className="space-y-1">
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-full rounded-full bg-primary transition-all"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">已下载 {progress}%</p>
-                </div>
-              ) : null}
+              {status ? <p className="text-xs text-muted-foreground">{status}</p> : null}
             </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">当前环境不支持应用内更新。</p>
-          )}
+            {update?.notes ? (
+              <p className="whitespace-pre-line text-xs text-muted-foreground">{update.notes}</p>
+            ) : null}
+            {installing && progress !== null ? (
+              <div className="space-y-1">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">已下载 {progress}%</p>
+              </div>
+            ) : null}
+          </div>
         </SettingField>
       </FieldGroup>
     </div>

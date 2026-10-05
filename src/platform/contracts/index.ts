@@ -1,34 +1,4 @@
-/** Stable, platform-neutral data contracts shared by all providers. */
-
-export type PlatformErrorCode =
-  | 'PLATFORM_NOT_IMPLEMENTED'
-  | 'PLATFORM_UNSUPPORTED'
-  | 'PERMISSION_DENIED'
-  | 'INVALID_ARGUMENT'
-  | 'IMAGE_DECODE_FAILED'
-  | 'IMAGE_ENCODE_FAILED'
-  | 'IO_FAILED'
-  | 'STORAGE_FAILED';
-
-export interface PlatformErrorOptions {
-  code: PlatformErrorCode;
-  provider: string;
-  cause?: unknown;
-}
-
-export class PlatformError extends Error {
-  readonly code: PlatformErrorCode;
-  readonly provider: string;
-  readonly cause?: unknown;
-
-  constructor(message: string, options: PlatformErrorOptions) {
-    super(message);
-    this.name = 'PlatformError';
-    this.code = options.code;
-    this.provider = options.provider;
-    this.cause = options.cause;
-  }
-}
+/** Stable data contracts shared across the app; the only host is Tauri. */
 
 export interface ExifData {
   make: string | null;

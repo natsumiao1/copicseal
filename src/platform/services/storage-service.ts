@@ -1,12 +1,17 @@
-import type { StorageAdapter, StorageServiceContract } from '@/platform/contracts/platform';
-export class StorageService implements StorageServiceContract {
-  constructor(private readonly adapter: StorageAdapter) {}
+import type { StorageServiceContract } from '@/platform/contracts/platform';
+import { getConfig, listSystemFonts, updateConfig } from '@/platform/providers/tauri/api';
 
-  getConfig = () => this.adapter.getConfig();
-  updateConfig = (config: Parameters<StorageAdapter['updateConfig']>[0]) =>
-    this.adapter.updateConfig(config);
-  listSystemFonts = () => this.adapter.listSystemFonts();
-}
+/**
+ * 配置与系统字体的实现：直接绑定宿主命令封装。
+ *
+ * 与 `file-service` 同理，多宿主时期的 adapter 中转层已移除，
+ * `StorageServiceContract` 仍是业务与宿主的唯一边界。
+ */
+export const storageService: StorageServiceContract = {
+  getConfig,
+  updateConfig,
+  listSystemFonts,
+};
 
 export type {
   AppConfig,

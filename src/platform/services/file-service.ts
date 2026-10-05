@@ -1,31 +1,39 @@
-import type { FileAdapter } from '@/platform/contracts/file';
 import type { FileServiceContract } from '@/platform/contracts/platform';
+import {
+  cleanupCache,
+  clearCache,
+  ensureBrowseThumbnail,
+  getCacheOverview,
+  importImageBytesToCache,
+  importImageToCache,
+  listFolderImages,
+  listImageFilesInDirectory,
+  listRootDirectories,
+  listSubdirectories,
+  readImageFile,
+  writeBinaryFile,
+} from '@/platform/providers/tauri/api';
 
-export class FileService implements FileServiceContract {
-  constructor(private readonly adapter: FileAdapter) {}
-
-  readImageFile = (path: string) => this.adapter.readImageFile(path);
-  writeBinaryFile = (path: string, contents: number[]) =>
-    this.adapter.writeBinaryFile(path, contents);
-  listImageFilesInDirectory = (path: string) => this.adapter.listImageFilesInDirectory(path);
-  listSubdirectories = (path: string) => this.adapter.listSubdirectories(path);
-  listRootDirectories = () => this.adapter.listRootDirectories();
-  listFolderImages = (path: string) => this.adapter.listFolderImages(path);
-  ensureBrowseThumbnail = (path: string, cacheDir: string) =>
-    this.adapter.ensureBrowseThumbnail(path, cacheDir);
-  importImageToCache = (path: string, cacheDir: string) =>
-    this.adapter.importImageToCache(path, cacheDir);
-  importImageBytesToCache = (name: string, contents: number[], cacheDir: string) =>
-    this.adapter.importImageBytesToCache(name, contents, cacheDir);
-  getCacheOverview = (cacheDir: string) => this.adapter.getCacheOverview(cacheDir);
-  clearCache = (
-    cacheDir: string,
-    scope?: 'all' | 'thumbnails' | 'previews',
-    keepPaths?: readonly string[],
-  ) => this.adapter.clearCache(cacheDir, scope, keepPaths);
-  cleanupCache = (cacheDir: string, maxAgeDays: number, keepPaths?: readonly string[]) =>
-    this.adapter.cleanupCache(cacheDir, maxAgeDays, keepPaths);
-}
+/**
+ * 文件与缓存能力的实现：直接绑定宿主命令封装。
+ *
+ * 产品只有 Tauri 一个宿主，早期为多宿主预留的 adapter 中转层已移除——
+ * `FileServiceContract` 仍是业务与宿主的唯一边界，宿主细节只在 `providers/tauri`。
+ */
+export const fileService: FileServiceContract = {
+  readImageFile,
+  writeBinaryFile,
+  listImageFilesInDirectory,
+  listSubdirectories,
+  listRootDirectories,
+  listFolderImages,
+  ensureBrowseThumbnail,
+  importImageToCache,
+  importImageBytesToCache,
+  getCacheOverview,
+  clearCache,
+  cleanupCache,
+};
 
 export type {
   BrowseThumbnailMeta,

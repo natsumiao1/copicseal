@@ -1,9 +1,6 @@
 export * from './contracts';
-export * from './errors';
 export { createPlatform, platform } from './platform';
-export { platformCapabilities, platformProvider } from './provider-registry';
 export * from './providers/tauri/api';
-export { tauriCapabilities, tauriProvider } from './providers/tauri/tauri-platform-provider';
 export * from './services/asset-service';
 export * from './services/cache-service';
 export * from './services/export-service';

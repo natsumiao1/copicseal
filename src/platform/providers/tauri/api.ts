@@ -241,12 +241,6 @@ export async function installUpdate(options?: AppUpdateInstallOptions): Promise<
 export function toNativeFileUrl(path: string) {
   return isNativeWindowAvailable() ? convertFileSrc(path) : path;
 }
-export function openImageDialog() {
-  return open({
-    multiple: true,
-    filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'heic', 'heif', 'hif', 'webp'] }],
-  });
-}
 export function saveImageDialog(defaultPath: string, extension: string) {
   return save({
     defaultPath,

@@ -1,16 +1,19 @@
 import { snapdom } from '@zumer/snapdom';
 import { capEmbeddedImages } from '@/core/renderer';
 import type { ExportServiceContract } from '@/platform/contracts/platform';
-import { platformRuntime } from '@/platform/providers/platform-runtime';
+import {
+  extractJpegExif,
+  getConfig,
+  insertJpegExif,
+  saveImageDialog,
+  writeBinaryFile,
+} from '@/platform/providers/tauri/api';
 import type {
   ExportFormat,
   ExportOptions,
   ExportPreset,
   ExportRunContext,
 } from '@/shared/types/export';
-
-const { extractJpegExif, getConfig, insertJpegExif, saveImageDialog, writeBinaryFile } =
-  platformRuntime;
 
 export type {
   ExportFormat,

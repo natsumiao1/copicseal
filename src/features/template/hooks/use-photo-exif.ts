@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ExifData } from '@/platform';
-import { readExifSource } from '@/platform/providers/platform-runtime';
+import { type ExifData, readExif } from '@/platform';
 import type { ImportedPhoto } from '@/shared/types/photo';
 
 interface PhotoExifState {
@@ -20,7 +19,7 @@ function resolveExif(photoId: string, source: string): Promise<ExifData | null> 
     return cached;
   }
 
-  const promise = readExifSource(source).catch((error) => {
+  const promise = readExif(source).catch((error) => {
     // 读取失败时移除缓存，切换回该图片时允许重试，同时输出日志便于排查。
     console.warn('[exif] 读取失败:', error);
     exifCache.delete(photoId);
