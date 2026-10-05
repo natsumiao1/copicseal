@@ -11,7 +11,7 @@ export type ExportFormat = 'jpeg' | 'png';
  * 单档导出配置：一档 = 一组目标尺寸 + 一套编码参数。
  *
  * `width` / `height` 是必填的目标框。无背景时它只作 contain 约束，
- * 有背景时它就是画框的精确尺寸（整除尺寸解算见 `docs/04`）。
+ * 有背景时它就是画框的精确尺寸（整除尺寸解算见 `docs/features.md` 3.4）。
  */
 export interface ExportPreset {
   id: string;

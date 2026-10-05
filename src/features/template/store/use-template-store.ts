@@ -67,7 +67,7 @@ interface TemplateStoreState {
 /**
  * Template 页的每图配置表。
  *
- * 不做持久化：照片 id 是会话级的，跨会话恢复没有意义（见 docs/05 存储原则）。
+ * 不做持久化：照片 id 是会话级的，跨会话恢复没有意义（见 docs/architecture.md 持久化策略）。
  */
 export const useTemplateStore = create<TemplateStoreState>()((set) => ({
   configs: {},

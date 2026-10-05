@@ -8,16 +8,12 @@
 
 | 文件 | 用途 |
 |------|------|
-| [docs/README.md](docs/README.md) | 架构设计书主索引 |
-| [docs/01-product-vision.md](docs/01-product-vision.md) | 产品定位与设计原则 |
-| [docs/02-workflow.md](docs/02-workflow.md) | 核心工作流 |
-| [docs/03-template-system.md](docs/03-template-system.md) | 模板系统需求 |
-| [docs/04-export-system.md](docs/04-export-system.md) | 导出系统需求 |
-| [docs/05-data-models.md](docs/05-data-models.md) | 数据模型与配置 |
-| [docs/06-system-integration.md](docs/06-system-integration.md) | 系统集成与存储 |
-| [docs/07-exif-metadata.md](docs/07-exif-metadata.md) | EXIF 元数据处理 |
-| [docs/08-product-requirements.md](docs/08-product-requirements.md) | 产品需求规格 |
-| [docs/TODO.md](docs/TODO.md) | 开发待办清单 |
+| [docs/README.md](docs/README.md) | 架构设计书主索引：产品定位、设计原则、全局布局 |
+| [docs/requirements.md](docs/requirements.md) | 产品需求规格：工作流、页面需求、导出与存储要求 |
+| [docs/features.md](docs/features.md) | 模板 / 拼图 / 导出 / EXIF 功能域实现细则 |
+| [docs/architecture.md](docs/architecture.md) | 前端分层、平台 Contract、数据模型与持久化 |
+| [docs/release.md](docs/release.md) | 发布流水线与自动更新 |
+| [docs/TODO.md](docs/TODO.md) | 开发待办清单与旧版对齐清单 |
 
 ## 项目结构
 
@@ -50,7 +46,7 @@ commitlint.config.js  # Commit 规范
 6. **需求文档规范**：只描述新产品需要实现的功能，不提及旧项目（Electron/Vue3）的实现细节
 7. **大型改动前先让用户审阅**：涉及架构、需求文档、TODO 的变更，先交给用户审阅再执行
 8. **shadcn 组件最小化修改**：安装的 shadcn/ui 组件必须最大限度减少修改，优先在业务侧用 `className`、`variant`、组件组合来扩展；一旦改动 `src/shared/ui/` 下的组件源码，必须写入 [src/shared/ui/README.md](src/shared/ui/README.md)，说明**哪个组件、改了什么、应用于什么地方**。组件升级时按该文件逐条回填改动
-9. **仅交付 Tauri 桌面端**：产品已放弃 Web 模式；`src/platform/` 的平台抽象层作为业务与宿主的唯一边界保留，只注册 Tauri Provider，不新增 Web 降级分支；存量浏览器 API 分支在 `docs/TODO.md` Phase 11（平台层收口）中清理
+9. **仅交付 Tauri 桌面端**：产品已放弃 Web 模式；`src/platform/` 的平台抽象层作为业务与宿主的唯一边界保留，只对接 Tauri 宿主（不做 Provider 注册与降级编排），不新增 Web 降级分支；存量浏览器 API 分支在 `docs/TODO.md` Phase 11（平台层收口）中清理
 
 ## 代码编写规范
 

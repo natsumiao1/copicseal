@@ -1,328 +1,156 @@
-# Copicseal 总开发待办
+# Copicseal 开发待办
 
-> 基于 2026-06-27 重制版产品文档
-> 目标：按新的产品定位、页面结构与 UI 规范从零完成实现
-
----
-
-## Phase 0 — 文档与边界确认
-
-- [x] 重写产品定位与设计原则
-- [x] 明确三个一级页面：`Template` / `Collage` / `Settings`
-- [x] 明确统一布局：`Nav + Workspace + Properties + Assets`
-- [x] 明确 `No Project System`
-- [x] 明确 `No Global Asset Workspace`
-- [x] 明确 Template 与 Collage 的独立边界
-- [x] 明确前端范围全部位于 `src/`
+> 需求见 [requirements.md](./requirements.md)、[features.md](./features.md)、[architecture.md](./architecture.md)。
+> Phase 0–10（应用骨架、Template / Collage / Settings 三大页面、基础设施与首轮验收）已全部完成，历史见 git。
+> 状态图例：`- [ ]` 待办；成本与类型标记见 §3 旧版对齐清单。
 
 ---
 
-## Phase 1 — 应用骨架
+## 1. 进行中的 Phase
 
-- [x] 建立 `app/` 路由结构
-- [x] 实现 `/template`、`/collage`、`/settings` 三个页面入口
-- [x] 实现左侧 `Nav` 固定宽度 `72px`
-- [x] 为导航图标补全 tooltip
-- [x] 禁止顶部 Tab 式页面导航
-- [x] 实现统一页面壳层布局
-- [x] 实现 `Properties` 面板默认 `320px`
-- [x] 实现 `Properties` 面板拖拽宽度 `280px ~ 420px`
-- [x] 实现 `Workspace` 与 `Assets` 的垂直分区结构
+### Phase 11 — 平台层收口（Tauri-only）
 
----
+> 2026-10-04 决定放弃 Web 端；2026-10-05 平台层进一步收口：平台抽象层作为业务与宿主的唯一边界保留，
+> 唯一宿主 Tauri——不做 Provider 注册、能力声明与降级编排（`platform.capabilities`、降级错误码、
+> 对话框导入入口均移除），多宿主时期留下的转发层也已删除（`platform-runtime` 门面、
+> `TauriFileAdapter` / `TauriStorageAdapter` 与 `FileAdapter` / `StorageAdapter` 类型，
+> Service 现在直接绑定 `providers/tauri` 的命令封装）
 
-## Phase 2 — Template 页面基础能力
-
-- [x] 创建 `features/template/`
-- [x] 建立 `Template Preview` 区域
-- [x] 接入 `<TemplateRuntime />`
-- [x] 实现 Template 页面缩放控制
-- [x] 支持 `Fit`
-- [x] 支持 `50%`
-- [x] 支持 `100%`
-- [x] 支持 `200%`
-- [x] 建立 `Template Assets` 区域
-- [x] 实现图片缩略图列表
-- [x] 支持拖拽导入
-- [x] 支持粘贴导入
-- [x] 支持文件夹导入
-- [x] 支持多选
-- [x] 支持排序
-- [x] 支持 `Ctrl+A`
-- [x] 支持 `Delete`
-
----
-
-## Phase 3 — Template 模板系统
-
-- [x] 创建模板注册表
-- [x] 提供内置模板数据结构
-- [x] 实现 `Template Selector`
-- [x] 支持模板搜索
-- [x] 支持模板收藏
-- [x] 支持最近使用
-- [x] 定义 `propsSchema` 结构
-- [x] 建立 Schema 到表单控件的自动生成器
-- [x] 禁止手写模板专用表单
-- [x] 打通模板切换到预览更新链路
-- [x] 为模板属性提供默认值与校验
-
----
-
-## Phase 4 — Template 导出能力
-
-- [x] 建立 Template `Export` 面板
-- [x] 支持 `PNG`
-- [x] 支持 `JPG`
-- [x] 支持 `WEBP`
-- [x] 支持质量调节
-- [x] 支持倍率调节
-- [x] 支持“导出当前”
-- [x] 支持“批量导出”
-- [x] 保证导出结果来自当前 Template Workspace
-
----
-
-## Phase 5 — Collage 页面基础能力
-
-- [x] 创建 `features/collage/`
-- [x] 建立 `Collage Preview` 区域
-- [x] 接入 `<CollageCanvas />`
-- [x] 建立 `Collage Assets` 区域
-- [x] 支持图片导入
-- [x] 支持拖入拼图
-- [x] 支持排序
-- [x] 支持替换图片
-- [x] 支持删除图片
-- [x] 建立顶部布局工具栏
-- [x] 支持 `2 Grid`
-- [x] 支持 `3 Grid`
-- [x] 支持 `4 Grid`
-- [x] 支持 `6 Grid`
-- [x] 支持 `Auto Layout`
-- [x] 支持 `Free Layout`
-
----
-
-## Phase 6 — Collage 属性系统
-
-- [x] 建立 `Layout` 面板
-- [x] 支持间距
-- [x] 支持边距
-- [x] 支持背景色
-- [x] 支持圆角
-- [x] 支持阴影
-- [x] 建立 `Selection` 面板
-- [x] 选中图片后支持缩放
-- [x] 选中图片后支持位置调整
-- [x] 选中图片后支持旋转
-- [x] 选中图片后支持圆角
-- [x] 建立 `Export` 面板
-- [x] 与 Template 共用导出参数结构
-
----
-
-## Phase 7 — Settings 页面
-
-- [x] 创建 `features/settings/`
-- [x] 实现 Settings 独立页面布局
-- [x] 建立 `General` 设置分组
-- [x] 支持主题
-- [x] 支持语言
-- [x] 支持启动页
-- [x] 支持默认导出目录
-- [x] 支持自动更新
-- [x] 建立 `Template` 设置分组
-- [x] 支持默认模板
-- [x] 支持默认字体
-- [x] 支持默认边框宽度
-- [x] 支持默认背景颜色
-- [x] 支持默认 EXIF 格式
-- [x] 建立 `Collage` 设置分组
-- [x] 支持默认布局
-- [x] 支持默认间距
-- [x] 支持默认背景色
-- [x] 支持默认圆角
-- [x] 建立 `Export` 设置分组
-- [x] 支持默认格式
-- [x] 支持默认倍率
-- [x] 支持默认质量
-- [x] 建立 `Cache` 分组
-- [x] 建立 `About` 分组
-
----
-
-## Phase 8 — 基础设施
-
-- [x] 建立 `platform/services/asset-service.ts`
-- [x] 建立 `platform/services/export-service.ts`
-- [x] 建立 `platform/services/file-service.ts`
-- [x] 建立 `platform/services/cache-service.ts`
-- [x] 建立 `platform/services/storage-service.ts`
-- [x] 建立统一导入能力
-- [x] 建立缩略图缓存能力
-- [x] 建立预览资源缓存能力
-- [x] 建立统一导出管线
-- [x] 建立导出任务状态与取消机制
-
----
-
-## Phase 9 — Template Runtime / Core / Bridge
-
-- [x] 建立 `features/template/runtime/`
-- [x] 建立模板注册与执行能力
-- [x] 建立 `core/renderer/`
-- [x] 建立 DOM 稳定性控制
-- [x] 建立 `core/scheduler/`
-- [x] 建立导出任务调度
-- [x] 建立 `bridge/tauri.ts`
-- [x] 建立 `bridge/export.api.ts`
-- [x] 建立 `bridge/assets.api.ts`
-- [x] 建立 `bridge/template.api.ts`
-- [x] 建立 `bridge/collage.api.ts`
-
----
-
-## Phase 10 — 收尾与验收
-
-- [x] 验证 Template 页面主流程
-- [x] 验证 Collage 页面主流程
-- [x] 验证 Settings 页面主流程
-- [x] 验证预览与导出一致性
-- [x] 验证 Template 与 Collage 状态互不污染
-- [x] 验证 `biome check`
-- [x] 验证 `vite build`
-- [x] 验证 Tauri 构建链路
-
----
-
-## Phase 11 — 平台层收口（Tauri-only）
-
-> 2026-10-04 决定：产品放弃 Web 端。平台层保留 Contract 作为业务与宿主的唯一边界，只注册 Tauri Provider
-
-- [x] 建立 `platform/contracts`、`services`、错误类型与能力声明
-- [x] 盘点并清理所有浏览器 API 调用点与非 Tauri 分支
-- [x] 删除 `src/platform/providers/web/`，`provider-registry` 只注册 Tauri Provider
-- [x] `asset-service` 移除 `webFiles` 浏览器选图与 `toUrl` 分支
-- [x] `export-service` 移除浏览器下载导出分支
-- [x] 移除 `PLATFORM_NOT_IMPLEMENTED` / `PLATFORM_UNSUPPORTED` 的降级编排（错误类型保留上抛）
 - [ ] 迁移图片读取、缩略图、缩放、编码与导出调用到 Image Contract
 - [ ] 为 HEIC/HIF 导出实现原始素材的临时高质量源，并清理或短期缓存该源
-- [ ] 迁移导入、保存、目录选择到 File / Dialog Contract
+- [ ] 迁移导入与保存到 File Contract（选图对话框入口已移除、设置页选目录直连宿主，不单设 Dialog Contract）
 - [ ] 迁移设置、收藏、最近使用和缓存索引到 Storage Contract
 - [ ] 为平台服务补充单元测试
-- [ ] 验证 Tauri 构建、核心导出流和预览/导出一致性
+- [ ] 验证 Tauri 构建、核心导出流和预览 / 导出一致性
 
----
+### Phase 12 — 导出尺寸解算与渲染基准
 
-## Phase 12 — 导出尺寸解算与渲染基准
-
-- [x] 模板几何全部改为 `--co-base` 的倍数，清除 `px` / `rem` / `vh` / `vw`
-- [x] 模板参数数值改为无单位比例
-- [x] 预览自适应与缩放改为基准驱动，移除预览区 CSS transform
-- [x] 导出实现「探针 → 测量 → 反解」，按 contain 命中目标框
-- [x] 导出固定光栅化像素比为 `1`，输出倍率只来自用户设置
-- [x] 导出支持多档输出与一次性目录选择
-- [x] 导出前等待画布内图片加载完成，避免按占位比例解算
-- [x] 预览自适应改为跟随预览区：无背景时画布在预览区内占满，有背景时背景铺满预览区、画布取扣掉内边距后的最大等比尺寸
-- [x] 预览缩放档位改为以照片原始像素宽度为基准，`100%` 即 1:1
-- [x] 预览在照片加载完成后自动重新解算，不再停在占位比例
 - [ ] 将导出分辨率元数据（`dpi`）写入文件，需后端写入命令支持
 - [ ] 导出期间改用离屏渲染节点，避免预览区画布尺寸跳变
 - [ ] 拼图导出接入基准解算，使面板宽高输入生效
 - [ ] 为尺寸解算（contain 反解、档位命名、重名处理）补充单元测试
 - [ ] 预览区可选标注导出档位的构图范围（预览按预览区铺满，不再体现档位比例）
 
----
+### Phase 13 — 模板背景
 
-## Phase 13 — 模板背景
-
-- [x] 背景作为框架级能力接入，字段独立于模板的参数体系
-- [x] 模板定义支持 `backgroundDefaults`，切换模板时重置为用户可覆盖的副本
-- [x] 支持无背景 / 纯色背景 / 照片模糊三种模式
-- [x] 内边距与模糊半径全部写成画框宽度的比例，不引入绝对单位
-- [x] 有背景时画框精确等于目标尺寸，无背景时画框贴合画布
-- [x] 背景字段支持按模式条件显示
-- [x] 纯色背景提供照片主题色盘（前 5 色，默认取第一个）
 - [ ] 自定义背景图（`customUrl`）与背景图库
 - [ ] 背景随模板预设一起保存与复用
 
----
+### Phase 14 — 每张照片独立模板配置
 
-## Phase 14 — 每张照片独立模板配置
-
-- [x] 模板、参数、背景与导出档位改为跟着照片走，不再全列表共用一份
-- [x] 每图配置由独立 store 承载，未编辑过的照片沿用框架默认且不落库
-- [x] 属性面板支持把「模板与参数」「背景」分别应用到其余照片
-- [x] 批量导出逐张按各自配置渲染，档位与背景都取自所属照片
-- [x] 导出前确保每张照片的 EXIF 已就绪，避免机型与拍摄参数渲染为空
-- [x] 档位不完整的照片在批量导出时跳过并提示数量
 - [ ] 素材缩略图上标出与当前照片配置不同的照片
 - [ ] 每图配置随模板预设一起保存与复用
 
----
+### Phase 15 — 发布流水线与自动更新
 
-## Phase 15 — 发布流水线与自动更新
-
-- [x] 建立可复用的打包流程，覆盖 Windows x64 / Windows ARM64 / macOS arm64 / macOS x64
-- [x] 标签发布流程与版本号同步（`pnpm sync:version <version>` 一次同步三处版本号）
-- [x] 推送 `dev` 或手动触发时只产出内测产物，不创建 Release
-- [x] 缺少更新签名密钥时自动降级为不产出更新包，并在公钥仍是占位符时拦截
-- [x] 由产物与签名生成更新清单 `latest.json` 并随 Release 发布
-- [x] 客户端补齐下载、安装与重启提示，启动后静默检查一次更新
-- [ ] 生成更新签名密钥、替换 `plugins.updater.pubkey` 占位符并配置 Secrets
+- [ ] 生成更新签名密钥、替换 `plugins.updater.pubkey` 占位符并配置 Secrets（见 [release.md](./release.md) §4）
 - [ ] 部署 `updates.copicseal.com` 更新服务，或确认长期使用 Release 上的 `latest.json`
 - [ ] macOS 代码签名与公证
 - [ ] Windows 代码签名证书
 - [ ] 独立的 lint 与类型检查工作流（复用 `pnpm run ci` 与 `tsc --noEmit`）
-- [ ] 清理 `features/settings/components/co-settings-dialog.tsx` 中无人引用的更新入口
+
+### Phase 16 — 拼图文件夹直览（验收）
+
+- [ ] 拼图主流程回归：文件夹树选目录 → 选图 → 拖入画布 → 导出
+- [ ] 重启后文件夹与画布槽位恢复（槽位 `id` 跨会话稳定）
+- [ ] Template 素材区与导入流程无回归
+
+### Phase 17 — 全局文件来源与顶部导航
+
+- [ ] 批量加入素材会话（整文件夹或多选批量进会话）—— 后续再做
+- [ ] `tsc --noEmit`、`biome check`、`rustfmt`、`clippy` 通过
+- [ ] 两页共用文件来源回归：切页不丢文件夹、跨页生效、重启恢复
+- [ ] 拖放 / 粘贴 / 点击缩略图三条导入链路回归
+- [ ] 已知行为变化确认：两页「批量导出」作用于跨功能累积的照片列表；Template 暂不支持手动排序与会话内逐张删除；面板移动 / 布局同步重挂载后树展开与缩略图本地状态重置（Rust 端按路径 + mtime 缓存兜底）；移除手动刷新后同一路径的目录内容变化不会重新枚举
+
+### Phase 18 — 可停靠面板布局（dockview）
+
+- [ ] `tsc --noEmit`、`biome check`、`rustfmt`、`clippy` 通过
+- [ ] 四面板拖动换位 / 四向分割 / 拖到中心合并 tab / 拖宽；面板间 4px 细缝可见
+- [ ] tab ✕ 关闭 → 顶栏「视图」菜单恢复（落位当前激活面板右侧）；设置页菜单禁用
+- [ ] 布局持久化：重启恢复位置与宽度；两页共享同一布局，切页后布局一致
+- [ ] 照片拖入画布 / 槽位与面板拖拽不互扰；批量导出等主流程无回归
+- [ ] 已知风险：面板跨组移动或跨页布局同步会重挂载面板内容 → 文件夹树展开态、缩略图本地状态重置（Rust 端按路径 + mtime 缓存兜底），验收后确有影响再把树状态外提
 
 ---
 
-## Phase 16 — 拼图文件夹直览
+## 2. 拼图专项未完成
 
-> 2026-10-04 立项：拼图素材区改为左侧双栏文件夹直览，需求见 02 / 08 / 09
-> 范围：仅 Collage 页面；Template 素材区保持导入模式不变
+- [ ] **排序**：文件来源按文件名排序，无手动排序；自由布局的层叠顺序即画布添加顺序，无法调整
+- [ ] **WEBP**：导出管线 `ExportFormat` 只有 `png | jpeg`（`src/shared/types/export.ts`），模板页同样只有这两档，属管线级缺口（原因见 [features.md](./features.md) §3.3）
+- [ ] 拼图页无粘贴导入（模板页有 `window paste` 监听）
+- [ ] 拼图两处半成品：60 步 undo/redo 与标注（text / arrow / rect / circle）类型、store 齐全，但无 UI 入口、画布不渲染
 
-### 16.1 平台层（Rust / Tauri）
+---
 
-- [x] 验证 HEIC/HIF 直读原文件生成缩略图的链路（代码级确认：`convert_heic_to_jpeg_path` 直接接受原文件路径，macOS 走 `sips`、Windows 走 WIC；运行时验证随 16.6 回归执行）
-- [x] 新增直览缩略图命令：直接以原文件为源生成缩略图，按原路径+mtime 哈希写入缓存（`ensure_browse_thumbnail`）
-- [x] 新增子目录枚举命令（文件夹树按需展开，不递归扫描，跳过隐藏目录）（`list_subdirectories`）
-- [x] 新增根节点枚举能力：用户主目录 + 外接磁盘由 Rust 提供（`list_root_directories`），最近使用的文件夹由前端持久化维护
-- [x] 平台能力声明补充文件夹直览项（`capabilities.files.folderBrowse`）
+## 3. 旧版对齐清单
 
-### 16.2 布局与插槽
+> 与旧版桌面应用的差异盘点，供产品负责人逐条决定「改 / 不改」。
+> 旧版代码在仓库 `dev` 分支（tip `5d18df1`），用 `git show dev:<path>` 查看。
+> 类型：`缺口` 旧有新无 ／ `默认值` 行为相同默认不同 ／ `缺陷` 新版自身问题。
+> 成本：`极小` 单点 ／ `小` 单文件到单面板 ／ `中` 跨 2–3 模块或需新增持久化 ／ `大` 需新数据层或新页面级能力。
 
-- [x] `shared/layouts/business-workbench` 增加可选左侧栏插槽，`Assets` 改为可选
-- [x] 拼图页接入「文件夹树 + 图片预览栏」双栏，移除底部素材条与导入按钮
+### A. 功能缺口（旧有、新无）
 
-### 16.3 文件夹树
+- [ ] **A1 输出档位预设清单**｜缺口｜成本 小 —— 旧版「+」下拉固定 10 项常用尺寸（1080P / 2K / 4K / 方图 / 朋友圈 / 小红书等），新版只能手填宽高，默认 2000×2000
+- [ ] **A2 「原始图片」档位**｜缺口｜成本 小 —— 旧版档位带 `isOriginal`，取 EXIF 宽高自动回填、应用全部时逐张重算；新版两轴必须手填，Rust 已读 `PixelXDimension` 但无人消费
+- [ ] **A3 宽高互换**｜缺口｜成本 极小 —— 旧版宽高之间 `⇋` 一键交换
+- [ ] **A4 档位排序**｜缺口｜成本 小 —— 旧版设置页输出表格支持上移 / 下移，新版只有增删
+- [ ] **A5 「存为默认」档位与导出目录**｜缺口｜成本 中 —— 旧版写入 `config.output.presets/defaultPath`，新导入图片自动套用；新版档位只在会话 store，重开回到单个 2000×2000
+- [ ] **A6 档位的「应用全部」**｜缺口｜成本 小 —— 旧版可把档位 + 目录复制到所有图片；新版「应用到其他」只有模板与参数 / 背景
+- [ ] **A7 导出目录入口无效**｜缺口｜成本 小 —— 新版设置页只读展示 `output.default_path` 但导出链路从不读取；无目录时批量导出 20 张会弹 20 次保存框（`src/platform/services/export-service.ts`）
+- [ ] **A8 导出进度与取消**｜缺口｜成本 小-中 —— 旧版全屏遮罩进度 + 取消；新版只有按钮 spinner，`cancelExportTask` / `runScheduledExports(onProgress)` 已就位但无人接线
+- [ ] **A9 「保留 EXIF」开关无效**｜缺口｜成本 小 —— `output.retain_exif` 已定义并持久化，导出面板硬编码 `preserveExif: true`
+- [ ] **A10 dpi 写回**｜缺口｜成本 中 —— 旧版写 `XResolution/YResolution`（JPEG）与 `PixelsPerUnitX/Y`（PNG）；新版 `dpi` 恒 72 且不写入文件
+- [ ] **A11 EXIF 字段级保留**｜缺口｜成本 中-大 —— 旧版合并原图全部 EXIF 后剔除尺寸 / Orientation / 缩略图并写 `Software: Copicseal`；新版仅 JPEG 做段级替换，PNG 完全不保留
+- [ ] **A12 用户设备库（相机 / 镜头）**｜缺口｜成本 大 —— 数据层齐备（`UserDevice` 结构体 + 持久化），但无设备命令、设置页无对应 Tab，只有未接线的 mock 组件
+- [ ] **A13 EXIF 逐字段编辑与还原**｜缺口｜成本 中-大 —— 旧版按模板实际用到的 EXIF 键生成可编辑输入框并合并渲染；新版 EXIF 卡片纯只读
+- [ ] **A14 全局字体选择**｜缺口｜成本 中 —— 旧版模板面板系统字体下拉 + 刷新；新版无字体 UI、水印字体写死，`listSystemFonts` / `FontConfig` / `fonts.default_font` 已就位但无消费方
+- [ ] **A15 模板预设（保存与复用）**｜缺口｜成本 中 —— 旧版可存为新配置（上限 10）/ 应用当前 / 应用全部 / 覆盖 / 删除；新版无，设置页「边框水印」分组是空占位
+- [ ] **A16 素材列表右键菜单**｜缺口｜成本 小 —— 旧版关闭 / 关闭其他 / 关闭左侧 / 右侧 / 全部关闭；新版无右键菜单也无批量移除
+- [ ] **A17 变量输入 UI**｜缺口｜成本 小-中 —— 旧版富文本编辑器 + 可点选变量胶囊；新版纯文本 `Input`，`EXIF_TEXT_VARIABLES` 无 UI 消费
+- [ ] **A18 EXIF 信息卡缺字段**｜缺口｜成本 小 —— 旧版固定 13 项（含「软件」「曝光模式」），新版 9 行，契约缺 `software` / `exposure_mode`
+- [ ] **A19 意见反馈入口**｜缺口｜成本 极小 —— 旧版菜单项直接打开 GitHub issues/new
+- [ ] **A20 关于页内容**｜缺口｜成本 小 —— 旧版有 logo、版本号、社交链接、免责声明；新版不显示版本（`getAppInfo()` 无消费方，未接线组件硬编码 `v0.2.0`）
+- [ ] **A21 旧 EXIF 变量名兼容**｜缺口｜成本 极小 —— 旧版 `{ISOSpeedRatings}` / `{DateTimeOriginal}` 可替换任意 key；新版只认 8 个白名单变量，沿用旧文案会原样显示占位符
+- [ ] **A22 两个整模板缺失**｜缺口｜成本 大 —— PS 启动窗模板与老照片时间戳模板，新版 6 个模板均无
+- [ ] **A23 叠字模板的日期格式参数**｜缺口｜成本 小 —— 旧版 `dateFormat` 走 dayjs 格式化
+- [ ] **A24 圆角模板的排列方向**｜缺口｜成本 小 —— 旧版有 `direction` 可切横排，新版无布局参数
+- [ ] **A25 保存目录的恢复默认 / 打开 / 迁移**｜缺口｜成本 小 —— 新版只能「选择」并写配置
+- [ ] **A26 拼图页没有粘贴导入**｜缺口｜成本 小（同 §2）
+- [ ] **A27 导入格式白名单变窄**｜缺口｜成本 小 —— 旧版 `accept="image/*"` 通吃；新版仅 jpg / jpeg / png / heic / heif / hif / webp，gif / bmp / tiff 被拒
+- [ ] **A28 旧配置迁移**｜缺口｜成本 中 —— 旧版 electron-store JSON，新版 SQLite `config_entries`，无迁移代码 → 升级后设置全丢（待确认是否有安装器侧迁移）
+- [ ] **A29 拼图页两处半成品**｜缺口｜成本 中（同 §2）
+- [ ] **A30 收藏 / 最近使用不持久化**｜缺口｜成本 小 —— 组件内 `useState` 硬编码初值，刷新即丢；旧版本无此功能，属新增未完成
 
-- [x] 根节点：最近使用 / 主目录 / 外接磁盘
-- [x] 懒加载展开子目录、展开与选中态样式
-- [x] 选中目录驱动图片预览栏加载
+### B. 默认值差异（影响开箱观感）
 
-### 16.4 图片预览栏
+- [ ] **B1 默认背景模式**｜成本 极小 —— 旧：照片模糊；新：无背景
+- [ ] **B2 默认输出档位**｜成本 极小 —— 旧：原始图片 + jpeg + 质量 0.8（优先「存为默认」）；新：2000×2000 + png + 90
+- [ ] **B3 新增档位的默认格式**｜成本 极小 —— 旧：jpeg；新：png
+- [ ] **B4 模板默认参数与编码**｜成本 小 —— 白框边距 0.04 → 0.006、文字色 `#000` → `#1a1a1a`、阴影改三参数；圆角半径 0.1 → 0.015；叠字 `layout` 默认 V → auto；水印旋转 ×100 编码 → -180~180、支持变量、空文案不渲染
+- [ ] **B5 品牌 / 机型归一化细节**｜成本 小 —— 旧版 Logo 先按 Model 再按 Make，新版相反；Rust `normalize_brand` 归一化后前端二次改写
 
-- [x] 目录枚举 → 缩略图网格（按文件名排序）
-- [x] 缩略图按需生成（条目进入视口时触发）
-- [x] 大目录虚拟滚动
-- [x] 点击选中当前图片（与画布、属性面板联动）
-- [x] hover 浮现「移除」，仅会话内隐藏、不删本地文件
-- [x] 拖入画布槽位（放入或替换），图片使用时才复制进缓存
-- [x] 未打开文件夹时的「打开文件夹」空态
+### C. 新版缺陷（自身问题）
 
-### 16.5 会话与恢复
+- [x] **C1 模板页头部「导出」是死按钮**｜成本 极小 —— 已修复：顶栏「导出当前 / 批量导出」接线 `handleExport`（`features/template/components/template-page.tsx`），右侧属性面板底部为档位配置区
+- [ ] **C2 拼图「批量导出」重复导出同一张**｜成本 小 —— `items: photos` 但 runner 忽略 `item`，对同一张画布导出 N 次，且无 context → 无导出目录、连弹 N 次保存框
+- [x] **C3 前端入口仍是脚手架残留**｜成本 极小 —— 已修复：`index.html` 标题改为 `Copicseal`、favicon 改用 `/favicon.png`（复制自 `src-tauri/icons/32x32.png`），并删除无引用的 `public/vite.svg`、`public/tauri.svg`
 
-- [x] collage store 持久化 `folderPath`，启动时校验路径有效性（`removedPaths` 仅会话内、`recentFolders` 一并持久化）
-- [x] 路径失效提示重新选择，不伪造目录内容
-- [x] 最近打开的文件夹列表持久化并接入文件夹树根节点
-- [x] 手动刷新重新枚举目录内容
+### E. 待拍板的产品决策
 
-### 16.6 验收
+- [ ] **E1 模板构成**：新增 minimal / film、去掉 PS 启动窗与老照片时间戳——有意取舍还是待补齐（见 A22）
+- [ ] **E2 拼图页整体是新增能力**（旧版没有）——确认作为长期产品扩展保留？
+- [ ] **E3 EXIF 变量策略**：是否保留旧变量名别名（A21）、缺失值替换为空串还是保留占位符
+- [ ] **E4 三个默认值**（B1 背景 / B2 档位 / B3 格式）是否回退到旧版观感
+- [ ] **E5 「看似完成实则不可用」的字段**：`theme`、`language`、`template_presets`、`fonts.default_font`、`user_devices`、`output.retain_exif`、`device_id`、能力位 `system.tray: true`——要么接线要么删除，避免配置契约与实现长期不一致
+- [ ] **E6 单实例与全局快捷键**：旧版也没有 → 确认不补
 
-- [x] `biome check`、`rustfmt`、`clippy` 通过
-- [ ] 拼图主流程回归：打开文件夹 → 选图 → 拖入画布 → 导出
-- [ ] 重启后文件夹与画布槽位恢复（槽位 `id` 跨会话稳定）
-- [ ] Template 素材区与导入流程无回归
+### 建议动手顺序（感知 / 成本比）
+
+1. **C 组缺陷**——几乎零成本，用户立刻能碰到
+2. **A1 + A2 + A3**：档位预设清单、原始图片档位、宽高互换
+3. **A9 + A7 + A8**：保留 EXIF 开关、导出目录接通、导出进度与取消（链路均已支持，属接线工作）
+4. **A14 → A15 + A5**：全局字体；模板预设与「存为默认」（同一个持久化动作，建议一起做）
+5. **B1 / B2 / B3**：默认值回退，改动极小但影响所有老用户观感，需先确认
+6. **A12 + A13**：用户设备与 EXIF 覆盖，最重，建议单独立项
