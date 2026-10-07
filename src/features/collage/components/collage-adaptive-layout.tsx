@@ -1,7 +1,10 @@
 import { ImagePlus, X } from 'lucide-react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  adaptivePhotoFitLimits,
+  clampAdaptivePhotoFit,
   computeAdaptiveGeometry,
+  DEFAULT_ADAPTIVE_FIT,
   FALLBACK_PHOTO_RATIO,
   getAdaptiveRootRatio,
   isAdaptiveEdgeFlush,
@@ -9,7 +12,7 @@ import {
 } from '@/features/collage/adaptive';
 import { getAspectRatioValue } from '@/features/collage/lib';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
-import type { AdaptiveInsertDirection } from '@/features/collage/types';
+import type { AdaptiveInsertDirection, AdaptivePhotoFit } from '@/features/collage/types';
 import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import { cn } from '@/shared/lib/utils';
@@ -113,7 +116,9 @@ interface CollageAdaptiveLayoutProps {
  * 如上1下1 的下排占满整宽，拖到左侧即劈成上1下2）；
  * 边距外框落点沿最近外沿整体插入一整行/一列；空画布直接落第一张。
  * 分割线把手：每个 split 节点的接缝上可拖调手动比例（双击恢复自动），
- * 手势配合 transient 合并为一步撤销。
+ * 手势配合 transient 合并为一步撤销；比例偏离照片后按照片填充方式渲染。
+ * 格内取景：单击照片选中（描边高亮），按住拖动平移（钳制在不露缝 / 不出格的可达范围，
+ * transient 合并一步撤销），双击照片重置；缩放走属性面板「选中项」。
  */
 export function CollageAdaptiveLayout({
   photoById,
@@ -128,6 +133,9 @@ export function CollageAdaptiveLayout({
   const replaceAdaptivePhoto = useCollageStore((state) => state.replaceAdaptivePhoto);
   const removeAdaptivePhoto = useCollageStore((state) => state.removeAdaptivePhoto);
   const setSplitRatio = useCollageStore((state) => state.setAdaptiveSplitRatio);
+  const selectedAdaptivePhotoId = useCollageStore((state) => state.selectedAdaptivePhotoId);
+  const selectAdaptivePhoto = useCollageStore((state) => state.selectAdaptivePhoto);
+  const setAdaptivePhotoFit = useCollageStore((state) => state.setAdaptivePhotoFit);
   const beginTransient = useCollageStore((state) => state.beginTransient);
   const endTransient = useCollageStore((state) => state.endTransient);
   const { ensureByPath } = usePhotoImportByPath();
@@ -137,6 +145,15 @@ export function CollageAdaptiveLayout({
   const [dropTarget, setDropTarget] = useState<AdaptiveDropTarget | null>(null);
   /** 分割线拖动是否进行中（pointer capture 保证事件回流到发起的把手） */
   const splitDragRef = useRef(false);
+  /** 格内取景拖拽的起手势快照（指针捕获在按下时的格子上，坐标按格子比例换算） */
+  const panRef = useRef<{
+    photoId: string;
+    startX: number;
+    startY: number;
+    cellWidth: number;
+    cellHeight: number;
+    fit: AdaptivePhotoFit;
+  } | null>(null);
   /** 内容区基准框：把手拖动时把指针坐标换算成 0..1 占比 */
   const contentRef = useRef<HTMLDivElement | null>(null);
 
@@ -153,6 +170,13 @@ export function CollageAdaptiveLayout({
   const splitRects = geometry.splits;
   /** contain = 完整显示、留白透出画布背景；自动比例下与 cover 渲染一致，拖过分割线后生效 */
   const fillContain = canvas.fillMode === 'contain';
+  /** 取景钳制使用的填充模式（收窄为字面量类型） */
+  const fillMode: 'cover' | 'contain' = fillContain ? 'contain' : 'cover';
+  /** 内容框比例 == 照片树自然比例（跟随内容与套内容两种模式都成立，见 frame memo）：格子像素比例由此折算 */
+  const naturalRatio = useMemo(
+    () => getAdaptiveRootRatio(tree, resolveRatio),
+    [resolveRatio, tree],
+  );
   /**
    * 画布套内容：固定比例下把照片树按自然比例 contain 进内容框并居中，
    * 余量透出画布背景（照片零裁切）；跟随内容时自然比例 == 画布比例，整框铺满。
@@ -206,6 +230,12 @@ export function CollageAdaptiveLayout({
     <div
       className={cn('absolute inset-0 flex', frameJustify, frameAlign)}
       style={{ padding: contentPadding }}
+      onPointerDown={(event) => {
+        // 单击边距环带（照片之外的画布空白）取消选中
+        if (event.button === 0 && event.target === event.currentTarget) {
+          selectAdaptivePhoto(null);
+        }
+      }}
       onDragOver={(event) => {
         // WKWebView/Safari 要求 dragenter 与 dragover 都被取消才放行 drop
         event.preventDefault();
@@ -278,6 +308,17 @@ export function CollageAdaptiveLayout({
 
           {rects.map((rect) => {
             const photo = photoById.get(rect.photoId);
+            const photoAspect = photo ? photoRatio(photo) : FALLBACK_PHOTO_RATIO;
+            // 格子像素比例：rect 相对内容框（恒等比 == 照片树自然比例），
+            // 是取景钳制（cover 不露缝 / contain 不出格）的基准
+            const cellAspect = (rect.width / Math.max(rect.height, 1e-6)) * naturalRatio;
+            const fit = rect.fit
+              ? clampAdaptivePhotoFit(rect.fit, cellAspect, photoAspect, fillMode)
+              : null;
+            const limits = photo
+              ? adaptivePhotoFitLimits(cellAspect, photoAspect, fillMode, fit?.scale ?? 1)
+              : { x: 0, y: 0 };
+            const canPan = limits.x > 0.002 || limits.y > 0.002;
             const cellZone =
               dropTarget?.photoId === rect.photoId && !dropTarget.root ? dropTarget.zone : null;
             // 格间距只作用于照片之间：贴画布外沿的边不内缩，
@@ -335,11 +376,14 @@ export function CollageAdaptiveLayout({
                   }
                 }}
               >
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: 照片格子按住拖动平移取景（按下选中、双击重置） */}
                 <div
                   className={cn(
                     'group relative h-full w-full overflow-hidden transition-colors hover:bg-muted/50',
                     // contain 下照片不铺满格子：底色让位给画布背景，空叶保留占位底色
                     photo && fillContain ? 'bg-transparent' : 'bg-muted/35',
+                    // 位移被钳到 0（照片恰好铺满格子、无可平移余量）时不摆出抓手
+                    canPan ? 'cursor-grab active:cursor-grabbing' : '',
                   )}
                   style={{
                     borderRadius: canvas.borderRadius,
@@ -347,6 +391,73 @@ export function CollageAdaptiveLayout({
                       canvas.shadow > 0
                         ? `0 14px 28px -18px rgba(15, 23, 42, ${Math.min(canvas.shadow / 100, 0.35)})`
                         : 'none',
+                  }}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) {
+                      return;
+                    }
+                    if (!photo) {
+                      // 点空叶（失效照片未回收前的占位）：清掉选中
+                      selectAdaptivePhoto(null);
+                      return;
+                    }
+                    // 「移除」按钮等内部控件不参与取景拖拽
+                    if ((event.target as HTMLElement).closest('button')) {
+                      return;
+                    }
+                    // 阻止默认行为避免选中文字/原生图片拖拽，并把后续指针事件锁到当前格子
+                    event.preventDefault();
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    selectAdaptivePhoto(rect.photoId);
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    panRef.current = {
+                      photoId: rect.photoId,
+                      startX: event.clientX,
+                      startY: event.clientY,
+                      cellWidth: Math.max(bounds.width, 1),
+                      cellHeight: Math.max(bounds.height, 1),
+                      fit: fit ?? DEFAULT_ADAPTIVE_FIT,
+                    };
+                    beginTransient();
+                  }}
+                  onPointerMove={(event) => {
+                    const pan = panRef.current;
+                    if (!pan || pan.photoId !== rect.photoId) {
+                      return;
+                    }
+                    // 指针位移换算成格子比例（与存储单位一致，视口缩放不漂移），写入前钳到可达范围
+                    setAdaptivePhotoFit(
+                      pan.photoId,
+                      clampAdaptivePhotoFit(
+                        {
+                          scale: pan.fit.scale,
+                          offsetX: pan.fit.offsetX + (event.clientX - pan.startX) / pan.cellWidth,
+                          offsetY: pan.fit.offsetY + (event.clientY - pan.startY) / pan.cellHeight,
+                        },
+                        cellAspect,
+                        photoAspect,
+                        fillMode,
+                      ),
+                    );
+                  }}
+                  onPointerUp={() => {
+                    if (panRef.current?.photoId !== rect.photoId) {
+                      return;
+                    }
+                    panRef.current = null;
+                    endTransient();
+                  }}
+                  onPointerCancel={() => {
+                    if (panRef.current?.photoId !== rect.photoId) {
+                      return;
+                    }
+                    panRef.current = null;
+                    endTransient();
+                  }}
+                  onDoubleClick={() => {
+                    if (photo && rect.fit) {
+                      setAdaptivePhotoFit(rect.photoId, null);
+                    }
                   }}
                 >
                   {photo ? (
@@ -358,12 +469,27 @@ export function CollageAdaptiveLayout({
                         fillContain ? 'object-contain' : 'object-cover',
                       )}
                       draggable={false}
+                      style={
+                        fit
+                          ? {
+                              transform: `translate(${fit.offsetX * 100}%, ${fit.offsetY * 100}%) scale(${fit.scale})`,
+                            }
+                          : undefined
+                      }
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-muted-foreground">
                       <ImagePlus className="size-5" />
                     </div>
                   )}
+
+                  {/* 选中态描边：独立覆盖层——格子自带内联 boxShadow，同元素上的 ring 类会被盖掉 */}
+                  {rect.photoId === selectedAdaptivePhotoId ? (
+                    <div
+                      className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-primary"
+                      style={{ borderRadius: canvas.borderRadius }}
+                    />
+                  ) : null}
 
                   {/* hover 浮现移除：只从画布去掉，不删磁盘文件 */}
                   <button

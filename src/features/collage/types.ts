@@ -5,18 +5,32 @@ export type CollageLayoutMode = 'grid' | 'free' | 'adaptive';
 export type AdaptiveInsertDirection = 'left' | 'right' | 'top' | 'bottom';
 
 /**
+ * 自适应叶子的格内取景调整：
+ * `scale` = 相对 object-fit 原始框的放大倍数（1 ~ 3）；`offsetX/offsetY` = 位移，
+ * 以**格子尺寸的比例**计量（0.25 = 格宽的 1/4）——随格子缩放同比例保持，视口变化不漂移。
+ * 缺省（字段不存在）= 未调整，存量数据行为与从前一致。
+ */
+export interface AdaptivePhotoFit {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+/**
  * 自适应布局树：叶子 = 一张照片；split = 把父矩形按方向二分。
  * `dir: 'v'` 左右分两列（children[0] 在左），`'h'` 上下分两行（children[0] 在上）。
  * `ratio` = 手动分割比例（children[0] 占分割轴的比例）；缺省则按两侧照片宽高比自动推导，
  * 存量数据无此字段，行为与从前一致。
  */
 export type AdaptiveNode =
-  | { type: 'leaf'; photoId: string }
+  | { type: 'leaf'; photoId: string; fit?: AdaptivePhotoFit }
   | { type: 'split'; dir: 'h' | 'v'; children: [AdaptiveNode, AdaptiveNode]; ratio?: number };
 
 /** 自适应布局中一张照片的画布矩形（相对坐标，0..1）。 */
 export interface AdaptiveRect {
   photoId: string;
+  /** 格内取景（未调整时缺省）：几何计算时从叶子带出，渲染与拖拽共用钳后值 */
+  fit?: AdaptivePhotoFit;
   x: number;
   y: number;
   width: number;

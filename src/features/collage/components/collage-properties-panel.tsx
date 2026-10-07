@@ -1,4 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  adaptivePhotoFitLimits,
+  clampAdaptivePhotoFit,
+  computeAdaptiveGeometry,
+  DEFAULT_ADAPTIVE_FIT,
+  FALLBACK_PHOTO_RATIO,
+  getAdaptiveRootRatio,
+  photoRatio,
+} from '@/features/collage/adaptive';
 import {
   COLLAGE_RATIO_OPTIONS,
   clamp,
@@ -6,7 +15,9 @@ import {
   MIN_CANVAS_RATIO,
 } from '@/features/collage/lib';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
+import type { AdaptivePhotoFit } from '@/features/collage/types';
 import { CoPanelSection } from '@/shared/components/co-panel-section';
+import { usePhotos } from '@/shared/hooks/use-photos';
 import { Input } from '@/shared/ui/input';
 import { Slider } from '@/shared/ui/slider';
 
@@ -55,7 +66,15 @@ function RatioInput({ value, onCommit }: RatioInputProps) {
 }
 
 export function CollagePropertiesPanel() {
-  const { present, selectedSlotIndex, updateCanvas, updateSlot } = useCollageStore();
+  const {
+    present,
+    selectedSlotIndex,
+    selectedAdaptivePhotoId,
+    updateCanvas,
+    updateSlot,
+    setAdaptivePhotoFit,
+  } = useCollageStore();
+  const { photos } = usePhotos();
 
   const selectedSlot =
     selectedSlotIndex !== null ? (present.slotItems[selectedSlotIndex] ?? null) : null;
@@ -66,6 +85,61 @@ export function CollagePropertiesPanel() {
   /** 自定义宽:高输入仅在「自定义比例」生效时显示（自适应跟随内容期间隐藏） */
   const showCustomRatioInputs =
     present.canvas.aspectPreset === 'custom' && (!isAdaptive || !adaptiveFollow);
+
+  /**
+   * 自适应格内取景：选中叶子的钳后取景与可达上限（仅自适应选中时有值）。
+   * 格子比例按当前树现算——rect 相对内容框，内容框恒等比 == 照片树自然比例。
+   */
+  const adaptiveSelection = useMemo(() => {
+    if (!isAdaptive || selectedAdaptivePhotoId === null) {
+      return null;
+    }
+    const photoById = new Map(photos.map((photo) => [photo.id, photo]));
+    const photo = photoById.get(selectedAdaptivePhotoId);
+    const tree = present.adaptiveTree;
+    if (!photo || !tree) {
+      return null;
+    }
+    const resolveRatio = (photoId: string) => {
+      const item = photoById.get(photoId);
+      return item ? photoRatio(item) : FALLBACK_PHOTO_RATIO;
+    };
+    const rect = computeAdaptiveGeometry(tree, resolveRatio).leaves.find(
+      (leaf) => leaf.photoId === selectedAdaptivePhotoId,
+    );
+    if (!rect) {
+      return null;
+    }
+    const cellAspect =
+      (rect.width / Math.max(rect.height, 1e-6)) * getAdaptiveRootRatio(tree, resolveRatio);
+    const photoAspect = photoRatio(photo);
+    const fillMode: 'cover' | 'contain' =
+      present.canvas.fillMode === 'contain' ? 'contain' : 'cover';
+    const fit = clampAdaptivePhotoFit(
+      rect.fit ?? DEFAULT_ADAPTIVE_FIT,
+      cellAspect,
+      photoAspect,
+      fillMode,
+    );
+    const limits = adaptivePhotoFitLimits(cellAspect, photoAspect, fillMode, fit.scale);
+    return { photoId: selectedAdaptivePhotoId, fit, limits, cellAspect, photoAspect, fillMode };
+  }, [isAdaptive, photos, present.adaptiveTree, present.canvas.fillMode, selectedAdaptivePhotoId]);
+
+  /** 取景写入：以面板显示的钳后值为底、合入增量再整体钳一次（缩放变化会同步收紧位移） */
+  const applyAdaptiveFit = (patch: Partial<AdaptivePhotoFit>) => {
+    if (!adaptiveSelection) {
+      return;
+    }
+    setAdaptivePhotoFit(
+      adaptiveSelection.photoId,
+      clampAdaptivePhotoFit(
+        { ...adaptiveSelection.fit, ...patch },
+        adaptiveSelection.cellAspect,
+        adaptiveSelection.photoAspect,
+        adaptiveSelection.fillMode,
+      ),
+    );
+  };
 
   return (
     <div className="divide-y divide-border/60">
@@ -267,7 +341,63 @@ export function CollagePropertiesPanel() {
         </div>
       </CoPanelSection>
 
-      {isAdaptive ? null : (
+      {isAdaptive ? (
+        <CoPanelSection
+          variant="flat"
+          title="选中项"
+          description={
+            adaptiveSelection
+              ? '在画布上直接拖动照片调整取景，双击照片重置；缩放越大，可平移的范围越大。'
+              : '单击画布里的照片，可以单独调整它在格子里的取景。'
+          }
+        >
+          {adaptiveSelection ? (
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>缩放</span>
+                  <span>{adaptiveSelection.fit.scale.toFixed(2)}x</span>
+                </div>
+                <Slider
+                  value={[adaptiveSelection.fit.scale]}
+                  onValueChange={([value]) => applyAdaptiveFit({ scale: value })}
+                  min={1}
+                  max={3}
+                  step={0.01}
+                />
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>水平位置</span>
+                  <span>{Math.round(adaptiveSelection.fit.offsetX * 100)}%</span>
+                </div>
+                <Slider
+                  value={[adaptiveSelection.fit.offsetX]}
+                  onValueChange={([value]) => applyAdaptiveFit({ offsetX: value })}
+                  min={-Math.max(adaptiveSelection.limits.x, 0.01)}
+                  max={Math.max(adaptiveSelection.limits.x, 0.01)}
+                  step={0.01}
+                />
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>垂直位置</span>
+                  <span>{Math.round(adaptiveSelection.fit.offsetY * 100)}%</span>
+                </div>
+                <Slider
+                  value={[adaptiveSelection.fit.offsetY]}
+                  onValueChange={([value]) => applyAdaptiveFit({ offsetY: value })}
+                  min={-Math.max(adaptiveSelection.limits.y, 0.01)}
+                  max={Math.max(adaptiveSelection.limits.y, 0.01)}
+                  step={0.01}
+                />
+              </div>
+            </div>
+          ) : null}
+        </CoPanelSection>
+      ) : (
         <CoPanelSection
           variant="flat"
           title="选中项"

@@ -1,6 +1,8 @@
+import { clamp } from './lib';
 import type {
   AdaptiveInsertDirection,
   AdaptiveNode,
+  AdaptivePhotoFit,
   AdaptiveRect,
   AdaptiveSplitRect,
 } from './types';
@@ -149,7 +151,7 @@ export function insertAdaptiveRoot(
   };
 }
 
-/** 替换目标照片（中心区拖放）：树形不变，只换 leaf 的 photoId。 */
+/** 替换目标照片（中心区拖放）：树形不变，只换 leaf 的 photoId；取景调整针对旧图构图，随替换重置。 */
 export function replaceAdaptivePhoto(
   tree: AdaptiveNode | null,
   targetPhotoId: string,
@@ -319,6 +321,108 @@ export function setAdaptiveSplitRatio(
   return walk(tree, 0);
 }
 
+/** 格内取景的缩放范围（与 Grid「选中项」一致：1x ~ 3x）。 */
+const MIN_FIT_SCALE = 1;
+const MAX_FIT_SCALE = 3;
+
+/** 未调整时的默认取景：渲染不加 transform，与旧数据表现完全一致。 */
+export const DEFAULT_ADAPTIVE_FIT: AdaptivePhotoFit = { scale: 1, offsetX: 0, offsetY: 0 };
+
+/**
+ * 取景位移的可达上限（单位 = 格子尺寸的比例，两轴独立）。
+ *
+ * 照片经 `object-fit` 渲染进格子后的盈缩比（`ratio`，相对格子宽 / 高）再乘 `scale`，
+ * 位移到「照片边缘正好贴住格子边」时的中心偏移量——cover 下保证永远不露背景缝，
+ * contain 下保证照片不会被拖出格子；两种模式统一为 `|ratio × scale − 1| / 2`
+ * （照片恰好铺满时上限为 0，需要先放大才可平移）。
+ */
+export function adaptivePhotoFitLimits(
+  cellAspect: number,
+  photoAspect: number,
+  fillMode: 'cover' | 'contain',
+  scale: number,
+): { x: number; y: number } {
+  const cell = Number.isFinite(cellAspect) && cellAspect > 0 ? cellAspect : 1;
+  const photo =
+    Number.isFinite(photoAspect) && photoAspect > 0 ? photoAspect : FALLBACK_PHOTO_RATIO;
+  const cover = fillMode !== 'contain';
+  const ratioW = cover ? Math.max(1, photo / cell) : Math.min(1, photo / cell);
+  const ratioH = cover ? Math.max(1, cell / photo) : Math.min(1, cell / photo);
+  return {
+    x: Math.abs(ratioW * scale - 1) / 2,
+    y: Math.abs(ratioH * scale - 1) / 2,
+  };
+}
+
+/**
+ * 把取景钳到安全范围：`scale` 1~3，位移不超过 `adaptivePhotoFitLimits` 的可达上限，
+ * 非法数值（NaN / Infinity）归到默认。渲染与写入共用，任何来源的值都不会露缝 / 出格。
+ */
+export function clampAdaptivePhotoFit(
+  fit: AdaptivePhotoFit,
+  cellAspect: number,
+  photoAspect: number,
+  fillMode: 'cover' | 'contain',
+): AdaptivePhotoFit {
+  const scale = clamp(Number.isFinite(fit.scale) ? fit.scale : 1, MIN_FIT_SCALE, MAX_FIT_SCALE);
+  const limits = adaptivePhotoFitLimits(cellAspect, photoAspect, fillMode, scale);
+  return {
+    scale,
+    offsetX: clamp(Number.isFinite(fit.offsetX) ? fit.offsetX : 0, -limits.x, limits.x),
+    offsetY: clamp(Number.isFinite(fit.offsetY) ? fit.offsetY : 0, -limits.y, limits.y),
+  };
+}
+
+/**
+ * 写入叶子的格内取景（按 photoId 定位——同图在画布只保留一份）。
+ * `fit` 为 null 时移除字段恢复默认（双击照片 / 面板重置）；没有该照片则原树不动。
+ * `scale` 在此统一钳 1~3；位移需要格子与照片比例才能钳到位，由调用方先钳再传。
+ */
+export function setAdaptivePhotoFit(
+  tree: AdaptiveNode | null,
+  photoId: string,
+  fit: AdaptivePhotoFit | null,
+): AdaptiveNode | null {
+  if (!tree) {
+    return null;
+  }
+
+  const walk = (node: AdaptiveNode): AdaptiveNode => {
+    if (node.type === 'leaf') {
+      if (node.photoId !== photoId) {
+        return node;
+      }
+      if (fit === null) {
+        // 恢复默认：重建节点丢掉 fit 字段（原地 delete 会破坏不可变约定）
+        return node.fit === undefined ? node : { type: 'leaf', photoId: node.photoId };
+      }
+      const scale = clamp(Number.isFinite(fit.scale) ? fit.scale : 1, MIN_FIT_SCALE, MAX_FIT_SCALE);
+      const offsetX = Number.isFinite(fit.offsetX) ? fit.offsetX : 0;
+      const offsetY = Number.isFinite(fit.offsetY) ? fit.offsetY : 0;
+      const current = node.fit;
+      if (
+        current &&
+        current.scale === scale &&
+        current.offsetX === offsetX &&
+        current.offsetY === offsetY
+      ) {
+        return node;
+      }
+      return { ...node, fit: { scale, offsetX, offsetY } };
+    }
+
+    const first = walk(node.children[0]);
+    const second = walk(node.children[1]);
+    if (first === node.children[0] && second === node.children[1]) {
+      return node;
+    }
+    const children: [AdaptiveNode, AdaptiveNode] = [first, second];
+    return { ...node, children };
+  };
+
+  return walk(tree);
+}
+
 /** 自适应布局的完整几何：叶子矩形（渲染照片）+ 分割节点矩形（渲染拖调把手）。 */
 export interface AdaptiveGeometry {
   leaves: AdaptiveRect[];
@@ -351,7 +455,14 @@ export function computeAdaptiveGeometry(
     height: number,
   ): void => {
     if (node.type === 'leaf') {
-      leaves.push({ photoId: node.photoId, x, y, width, height });
+      leaves.push({
+        photoId: node.photoId,
+        ...(node.fit ? { fit: node.fit } : {}),
+        x,
+        y,
+        width,
+        height,
+      });
       return;
     }
 

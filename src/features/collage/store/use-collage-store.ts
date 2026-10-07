@@ -8,12 +8,14 @@ import {
   insertAdaptiveRoot,
   removeAdaptivePhoto,
   replaceAdaptivePhoto,
+  setAdaptivePhotoFit,
   setAdaptiveSplitRatio,
 } from '../adaptive';
 import { COLLAGE_LAYOUTS } from '../layouts';
 import { createAnnotation, createEmptySlotState, getDefaultCanvasState } from '../lib';
 import type {
   AdaptiveInsertDirection,
+  AdaptivePhotoFit,
   CollageAnnotation,
   CollageCanvasState,
   CollagePresentState,
@@ -104,6 +106,9 @@ interface CollageStoreState {
   redo: () => void;
   selectSlot: (index: number | null) => void;
   selectAnnotation: (id: string | null) => void;
+  /** 自适应：选中画布里的照片（格内取景的目标），与 Grid 槽位 / 标注选择互斥；不进历史、不持久化 */
+  selectedAdaptivePhotoId: string | null;
+  selectAdaptivePhoto: (photoId: string | null) => void;
   setLayout: (layoutId: string) => void;
   updateCanvas: (patch: Partial<CollageCanvasState>) => void;
   assignPhotoToSlot: (index: number, photoId: string) => void;
@@ -130,6 +135,12 @@ interface CollageStoreState {
    * 拖动手势配合 beginTransient / endTransient 合并为一步历史。
    */
   setAdaptiveSplitRatio: (path: number[], ratio: number | null) => void;
+  /**
+   * 自适应：写入叶子的格内取景（缩放 / 位移），`fit` 为 null = 重置恢复默认。
+   * 位移需要格子与照片比例才能钳到位，由调用方（画布拖拽 / 属性面板）先钳再传；
+   * 拖动手势配合 beginTransient / endTransient 合并为一步历史。
+   */
+  setAdaptivePhotoFit: (photoId: string, fit: AdaptivePhotoFit | null) => void;
   /** 自适应布局：移除照片，父节点自动塌缩 */
   removeAdaptivePhoto: (photoId: string) => void;
   /** 自适应布局：一键清空画布上的全部照片（只清画布，不删除任何文件） */
@@ -148,6 +159,7 @@ export const useCollageStore = create<CollageStoreState>()(
       present: getDefaultPresentState(),
       selectedSlotIndex: null,
       selectedAnnotationId: null,
+      selectedAdaptivePhotoId: null,
       restorePending: false,
       transientBase: null,
       commit: (updater) => {
@@ -227,6 +239,7 @@ export const useCollageStore = create<CollageStoreState>()(
             future: [clonePresentState(state.present), ...state.future].slice(0, 59),
             selectedSlotIndex: null,
             selectedAnnotationId: null,
+            selectedAdaptivePhotoId: null,
             // 手势被历史操作打断：基线已过期，作废
             transientBase: null,
           };
@@ -245,6 +258,7 @@ export const useCollageStore = create<CollageStoreState>()(
             future: state.future.slice(1),
             selectedSlotIndex: null,
             selectedAnnotationId: null,
+            selectedAdaptivePhotoId: null,
             // 同 undo：打断进行中的手势时丢弃基线
             transientBase: null,
           };
@@ -254,12 +268,21 @@ export const useCollageStore = create<CollageStoreState>()(
         set({
           selectedSlotIndex: index,
           selectedAnnotationId: null,
+          selectedAdaptivePhotoId: null,
         });
       },
       selectAnnotation: (id) => {
         set({
           selectedSlotIndex: null,
           selectedAnnotationId: id,
+          selectedAdaptivePhotoId: null,
+        });
+      },
+      selectAdaptivePhoto: (photoId) => {
+        set({
+          selectedAdaptivePhotoId: photoId,
+          selectedSlotIndex: null,
+          selectedAnnotationId: null,
         });
       },
       setLayout: (layoutId) => {
@@ -293,7 +316,11 @@ export const useCollageStore = create<CollageStoreState>()(
           }
         });
         if (modeChanged) {
-          set({ selectedSlotIndex: null, selectedAnnotationId: null });
+          set({
+            selectedSlotIndex: null,
+            selectedAnnotationId: null,
+            selectedAdaptivePhotoId: null,
+          });
         }
       },
       assignPhotoToSlot: (index, photoId) => {
@@ -365,6 +392,9 @@ export const useCollageStore = create<CollageStoreState>()(
             draft.adaptiveTree = removeAdaptivePhoto(draft.adaptiveTree, photoId);
           }
         });
+        if (get().selectedAdaptivePhotoId === photoId) {
+          set({ selectedAdaptivePhotoId: null });
+        }
       },
       insertAdaptivePhoto: (targetPhotoId, direction, newPhotoId) => {
         const tree = get().present.adaptiveTree;
@@ -383,21 +413,35 @@ export const useCollageStore = create<CollageStoreState>()(
         get().commit((draft) => {
           draft.adaptiveTree = replaceAdaptivePhoto(draft.adaptiveTree, targetPhotoId, newPhotoId);
         });
+        // 目标照片已被换掉：旧的选中态与取景一并失效
+        if (get().selectedAdaptivePhotoId === targetPhotoId) {
+          set({ selectedAdaptivePhotoId: null });
+        }
       },
       setAdaptiveSplitRatio: (path, ratio) => {
         get().commit((draft) => {
           draft.adaptiveTree = setAdaptiveSplitRatio(draft.adaptiveTree, path, ratio);
         });
       },
+      setAdaptivePhotoFit: (photoId, fit) => {
+        get().commit((draft) => {
+          draft.adaptiveTree = setAdaptivePhotoFit(draft.adaptiveTree, photoId, fit);
+        });
+      },
       removeAdaptivePhoto: (photoId) => {
         get().commit((draft) => {
           draft.adaptiveTree = removeAdaptivePhoto(draft.adaptiveTree, photoId);
         });
+        // 被移除的照片还处于选中态则一并清掉，避免面板指向不存在的叶子
+        if (get().selectedAdaptivePhotoId === photoId) {
+          set({ selectedAdaptivePhotoId: null });
+        }
       },
       clearAdaptiveCanvas: () => {
         get().commit((draft) => {
           draft.adaptiveTree = null;
         });
+        set({ selectedAdaptivePhotoId: null });
       },
       // 文件夹直览状态（当前文件夹 / 最近使用 / 隐藏条目）已上提到全局
       // `useFileSourceStore`：文件来源是应用级能力，不再属于拼图。
