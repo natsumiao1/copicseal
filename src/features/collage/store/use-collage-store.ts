@@ -15,7 +15,6 @@ import type {
   AdaptiveInsertDirection,
   CollageAnnotation,
   CollageCanvasState,
-  CollageExportState,
   CollagePresentState,
   CollageSlotState,
 } from '../types';
@@ -30,10 +29,6 @@ function getDefaultPresentState(): CollagePresentState {
   return {
     layoutId: DEFAULT_LAYOUT.id,
     canvas: getDefaultCanvasState(),
-    exportSettings: {
-      format: 'png',
-      quality: 'high',
-    },
     slotItems: Array.from({ length: DEFAULT_LAYOUT.count }, () => createEmptySlotState()),
     annotations: [],
     adaptiveTree: null,
@@ -110,7 +105,6 @@ interface CollageStoreState {
   selectAnnotation: (id: string | null) => void;
   setLayout: (layoutId: string) => void;
   updateCanvas: (patch: Partial<CollageCanvasState>) => void;
-  updateExportSettings: (patch: Partial<CollageExportState>) => void;
   assignPhotoToSlot: (index: number, photoId: string) => void;
   clearSlot: (index: number) => void;
   swapSlots: (from: number, to: number) => void;
@@ -295,14 +289,6 @@ export const useCollageStore = create<CollageStoreState>()(
           set({ selectedSlotIndex: null, selectedAnnotationId: null });
         }
       },
-      updateExportSettings: (patch) => {
-        get().commit((draft) => {
-          draft.exportSettings = {
-            ...draft.exportSettings,
-            ...patch,
-          };
-        });
-      },
       assignPhotoToSlot: (index, photoId) => {
         get().commit((draft) => {
           // 同一张图在画布里只保留一份：先清掉其它槽位对该图的引用，再落入目标槽位。
@@ -479,21 +465,25 @@ export const useCollageStore = create<CollageStoreState>()(
         const hasAdaptivePhotos =
           collectAdaptivePhotoIds(persisted.present.adaptiveTree ?? null).length > 0;
 
+        // 旧版画布状态里的导出设置已迁往全局导出预设（`useExportPresetStore`），读取后直接丢弃
+        const nextPresent = {
+          ...currentState.present,
+          ...persisted.present,
+          slotItems: normalizeSlots(
+            persisted.present.layoutId ?? currentState.present.layoutId,
+            persisted.present.slotItems ?? currentState.present.slotItems,
+            persisted.present.canvas?.layoutMode ?? currentState.present.canvas.layoutMode,
+          ),
+          annotations: normalizeAnnotations(
+            persisted.present.annotations ?? currentState.present.annotations,
+          ),
+        };
+        delete (nextPresent as Record<string, unknown>).exportSettings;
+
         return {
           ...currentState,
           ...restPersisted,
-          present: {
-            ...currentState.present,
-            ...persisted.present,
-            slotItems: normalizeSlots(
-              persisted.present.layoutId ?? currentState.present.layoutId,
-              persisted.present.slotItems ?? currentState.present.slotItems,
-              persisted.present.canvas?.layoutMode ?? currentState.present.canvas.layoutMode,
-            ),
-            annotations: normalizeAnnotations(
-              persisted.present.annotations ?? currentState.present.annotations,
-            ),
-          },
+          present: nextPresent,
           restorePending: hasSlotPhotos || hasAdaptivePhotos,
         };
       },

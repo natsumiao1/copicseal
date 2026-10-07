@@ -162,6 +162,15 @@ export function insertJpegExif(jpegData: number[], exifSegment: number[]): Promi
   return invoke('insert_jpeg_exif', { jpegData, exifSegment });
 }
 
+/**
+ * 抹掉 EXIF 段里的 GPS 位置信息（删除 IFD0 的 GPSInfo 指针 0x8825）。
+ *
+ * 结构不符合预期时 Rust 侧原样返回，不会把可读的 EXIF 改坏。
+ */
+export function stripExifGps(exifSegment: number[]): Promise<number[]> {
+  return invoke('strip_exif_gps', { exifSegment });
+}
+
 export function onNativeFileDrop(
   handler: Parameters<ReturnType<typeof getCurrentWindow>['onDragDropEvent']>[0],
 ) {

@@ -1,25 +1,23 @@
 import { create } from 'zustand';
-import type { ExportPreset } from '@/shared/types/export';
 import { resolveTemplateBackground, type TemplateBackground } from '../background';
-import { createExportPreset } from '../lib/export-preset';
 import { getDefaultParams, resolveBuiltinTemplate } from '../runtime/template-registry';
 import { DEFAULT_TEMPLATE_ID } from '../templates';
 
 /**
  * 单张照片的模板配置。
  *
- * 模板、参数、背景与导出档位都跟着照片走：批量处理时每张图可以有自己的
- * 边框样式与输出尺寸，互不干扰。
+ * 模板、参数与背景跟着照片走：批量处理时每张图可以有自己的边框样式，
+ * 互不干扰。导出参数不在这里——它属于全局共享的导出预设（见
+ * `useExportPresetStore`），与照片解耦。
  */
 export interface TemplatePhotoConfig {
   templateId: string;
   params: Record<string, unknown>;
   background: TemplateBackground;
-  presets: ExportPreset[];
 }
 
 /** 一键应用的范围：参数脱离所属模板没有意义，因此模板与参数必须一起复制。 */
-export type TemplateApplyScope = 'template' | 'background' | 'presets';
+export type TemplateApplyScope = 'template' | 'background';
 
 function createDefaultConfig(): TemplatePhotoConfig {
   const template = resolveBuiltinTemplate(DEFAULT_TEMPLATE_ID);
@@ -28,7 +26,6 @@ function createDefaultConfig(): TemplatePhotoConfig {
     templateId: template.meta.id,
     params: getDefaultParams(template.schema),
     background: resolveTemplateBackground(template.backgroundDefaults),
-    presets: [createExportPreset()],
   };
 }
 
@@ -53,7 +50,6 @@ interface TemplateStoreState {
   setTemplate: (photoId: string, templateId: string) => void;
   setParams: (photoId: string, params: Record<string, unknown>) => void;
   setBackground: (photoId: string, background: TemplateBackground) => void;
-  setPresets: (photoId: string, presets: ExportPreset[]) => void;
   /** 把某张照片的配置复制给其他照片，源照片本身不变。 */
   applyToOthers: (
     photoIds: readonly string[],
@@ -114,18 +110,6 @@ export const useTemplateStore = create<TemplateStoreState>()((set) => ({
     }));
   },
 
-  setPresets: (photoId, presets) => {
-    set((state) => ({
-      configs: {
-        ...state.configs,
-        [photoId]: {
-          ...configFor(state.configs, photoId),
-          presets,
-        },
-      },
-    }));
-  },
-
   applyToOthers: (photoIds, sourcePhotoId, scope) => {
     set((state) => {
       const source = configFor(state.configs, sourcePhotoId);
@@ -138,13 +122,11 @@ export const useTemplateStore = create<TemplateStoreState>()((set) => ({
         }
 
         const target = configFor(state.configs, photoId);
-        // 模板与参数必须一起复制；背景、导出档位各自独立
+        // 模板与参数必须一起复制；背景单独复制
         const patch: Partial<TemplatePhotoConfig> =
           scope === 'template'
             ? { templateId: source.templateId, params: structuredClone(source.params) }
-            : scope === 'background'
-              ? { background: structuredClone(source.background) }
-              : { presets: structuredClone(source.presets) };
+            : { background: structuredClone(source.background) };
 
         configs[photoId] = { ...target, ...patch };
         changed = true;

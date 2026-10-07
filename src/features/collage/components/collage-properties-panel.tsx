@@ -1,103 +1,20 @@
-import { Loader2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import {
-  FALLBACK_PHOTO_RATIO,
-  getAdaptiveRootRatio,
-  photoRatio,
-} from '@/features/collage/adaptive';
-import {
-  COLLAGE_EXPORT_LABELS,
-  COLLAGE_RATIO_OPTIONS,
-  getAspectRatioValue,
-} from '@/features/collage/lib';
+import { COLLAGE_RATIO_OPTIONS } from '@/features/collage/lib';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import { CoPanelSection } from '@/shared/components/co-panel-section';
-import { usePhotos } from '@/shared/hooks/use-photos';
-import type { ExportOptions } from '@/shared/lib/export-photo';
-import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { Slider } from '@/shared/ui/slider';
 
-interface CollagePropertiesPanelProps {
-  onExportCurrent: (options: ExportOptions) => Promise<void>;
-  onExportBatch: (options: ExportOptions) => Promise<void>;
-}
-
-export function CollagePropertiesPanel({
-  onExportCurrent,
-  onExportBatch,
-}: CollagePropertiesPanelProps) {
-  const { photos } = usePhotos();
-  const { present, selectedSlotIndex, updateCanvas, updateSlot, updateExportSettings } =
-    useCollageStore();
-  const [scale, setScale] = useState([1]);
-  const [quality, setQuality] = useState([90]);
-  const [width, setWidth] = useState('');
-  const [height, setHeight] = useState('');
-  const [exporting, setExporting] = useState<'single' | 'batch' | null>(null);
+export function CollagePropertiesPanel() {
+  const { present, selectedSlotIndex, updateCanvas, updateSlot } = useCollageStore();
 
   const selectedSlot =
     selectedSlotIndex !== null ? (present.slotItems[selectedSlotIndex] ?? null) : null;
 
   const isAdaptive = present.canvas.layoutMode === 'adaptive';
-  // 自适应模式画布比例跟随内容：导出的目标尺寸按根节点比例给出
-  const adaptiveRatio = useMemo(() => {
-    if (!isAdaptive) {
-      return null;
-    }
-    return getAdaptiveRootRatio(present.adaptiveTree, (photoId) => {
-      const photo = photos.find((item) => item.id === photoId);
-      return photo ? photoRatio(photo) : FALLBACK_PHOTO_RATIO;
-    });
-  }, [isAdaptive, photos, present.adaptiveTree]);
-
-  // 拼图不参与模板的基准解算，只以单档形式走统一导出管线；
-  // 目标尺寸仅用于文件命名，缺省时按画布比例给出一组值。
-  const buildOptions = (): ExportOptions => {
-    const canvasRatio = isAdaptive ? (adaptiveRatio ?? 1) : getAspectRatioValue(present.canvas);
-    const longEdge = 2000;
-    const fallback =
-      canvasRatio >= 1
-        ? { width: longEdge, height: Math.round(longEdge / canvasRatio) }
-        : { width: Math.round(longEdge * canvasRatio), height: longEdge };
-
-    return {
-      presets: [
-        {
-          id: 'default',
-          format: present.exportSettings.format,
-          width: Number(width) || fallback.width,
-          height: Number(height) || fallback.height,
-          scale: scale[0],
-          quality: quality[0],
-        },
-      ],
-      dpi: 72,
-      preserveExif: false,
-    };
-  };
-
-  const handleExportCurrent = async () => {
-    setExporting('single');
-    try {
-      await onExportCurrent(buildOptions());
-    } finally {
-      setExporting(null);
-    }
-  };
-
-  const handleExportBatch = async () => {
-    setExporting('batch');
-    try {
-      await onExportBatch(buildOptions());
-    } finally {
-      setExporting(null);
-    }
-  };
 
   return (
-    <div className="space-y-3">
-      <CoPanelSection title="布局" description="控制画布布局、间距与背景样式。">
+    <div className="divide-y divide-border/60">
+      <CoPanelSection variant="flat" title="布局" description="控制画布布局、间距与背景样式。">
         <div className="space-y-4">
           <div>
             <span className="text-xs font-medium text-foreground">画布比例</span>
@@ -201,6 +118,7 @@ export function CollagePropertiesPanel({
 
       {isAdaptive ? null : (
         <CoPanelSection
+          variant="flat"
           title="选中项"
           description={
             selectedSlotIndex === null
@@ -285,95 +203,6 @@ export function CollagePropertiesPanel({
           ) : null}
         </CoPanelSection>
       )}
-
-      <CoPanelSection title="导出" description="导出参数与「边框水印」一致，导出的是当前拼图。">
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-2">
-            {(['png', 'jpeg'] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => updateExportSettings({ format: item })}
-                className={`border px-3 py-2 text-xs ${
-                  present.exportSettings.format === item
-                    ? 'border-primary bg-primary/5 text-foreground'
-                    : 'border-border'
-                }`}
-              >
-                {item.toUpperCase()}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-3 gap-2">
-            {(['standard', 'high', 'ultra'] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => updateExportSettings({ quality: item })}
-                className={`border px-3 py-2 text-xs ${
-                  present.exportSettings.quality === item
-                    ? 'border-primary bg-primary/5 text-foreground'
-                    : 'border-border'
-                }`}
-              >
-                {COLLAGE_EXPORT_LABELS[item]}
-              </button>
-            ))}
-          </div>
-
-          <div className="space-y-1.5">
-            <span className="text-xs font-medium text-foreground">倍率</span>
-            <Slider value={scale} onValueChange={setScale} min={0.5} max={3} step={0.1} />
-            <span className="text-[10px] text-muted-foreground">{scale[0].toFixed(1)}x</span>
-          </div>
-
-          {present.exportSettings.format !== 'png' ? (
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-foreground">质量</span>
-              <Slider value={quality} onValueChange={setQuality} min={1} max={100} step={1} />
-              <span className="text-[10px] text-muted-foreground">{quality[0]}</span>
-            </div>
-          ) : null}
-
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-foreground">宽度</span>
-              <Input
-                value={width}
-                onChange={(event) => setWidth(event.target.value)}
-                placeholder="自动"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-foreground">高度</span>
-              <Input
-                value={height}
-                onChange={(event) => setHeight(event.target.value)}
-                placeholder="自动"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <Button
-              variant="outline"
-              disabled={exporting !== null || photos.length === 0}
-              onClick={() => void handleExportCurrent()}
-            >
-              {exporting === 'single' ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              导出当前
-            </Button>
-            <Button
-              disabled={exporting !== null || photos.length === 0}
-              onClick={() => void handleExportBatch()}
-            >
-              {exporting === 'batch' ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              批量导出
-            </Button>
-          </div>
-        </div>
-      </CoPanelSection>
     </div>
   );
 }

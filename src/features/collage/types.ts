@@ -21,10 +21,6 @@ export interface AdaptiveRect {
   height: number;
 }
 
-export type CollageExportFormat = 'png' | 'jpeg';
-
-export type CollageExportQuality = 'standard' | 'high' | 'ultra';
-
 export type CollageAnnotationType = 'text' | 'arrow' | 'rect' | 'circle';
 
 export interface CollageLayoutSlot {
@@ -106,15 +102,9 @@ export type CollageAnnotation =
   | CollageArrowAnnotation
   | CollageShapeAnnotation;
 
-export interface CollageExportState {
-  format: CollageExportFormat;
-  quality: CollageExportQuality;
-}
-
 export interface CollagePresentState {
   layoutId: string;
   canvas: CollageCanvasState;
-  exportSettings: CollageExportState;
   slotItems: CollageSlotState[];
   annotations: CollageAnnotation[];
   /** 自适应布局树；仅 layoutMode === 'adaptive' 时有意义，null = 画布为空 */

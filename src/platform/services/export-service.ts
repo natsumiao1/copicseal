@@ -5,22 +5,33 @@ import {
   extractJpegExif,
   getConfig,
   insertJpegExif,
+  pathExists,
   saveImageDialog,
+  stripExifGps,
   writeBinaryFile,
 } from '@/platform/providers/tauri/api';
 import type {
+  ExportConflictStrategy,
   ExportFormat,
   ExportOptions,
   ExportPreset,
+  ExportPresetProfile,
   ExportRunContext,
+  ExportTarget,
 } from '@/shared/types/export';
 
 export type {
+  ExportConflictStrategy,
+  ExportDestination,
+  ExportFitAxis,
   ExportFormat,
   ExportOptions,
   ExportPreset,
+  ExportPresetProfile,
   ExportRunContext,
   ExportSizeAdapter,
+  ExportSizing,
+  ExportTarget,
 } from '@/shared/types/export';
 
 export interface ExportTaskState {
@@ -54,15 +65,10 @@ async function captureElement(
   element: HTMLElement,
   preset: ExportPreset,
   options: ExportOptions,
-  context?: ExportRunContext,
 ): Promise<Uint8Array> {
-  // 尺寸解算交给页面侧的适配器：只有它知道背景模式与画布结构
-  if (context?.sizeAdapter) {
-    await context.sizeAdapter.prepare({ width: preset.width, height: preset.height });
-  }
-
   const fmt = toSnapdomFormat(preset.format);
-  const scale = Math.max(preset.scale || 1, 1);
+  // 倍率允许小于 1（调整大小至的输出小于画布渲染尺寸时靠它缩小）
+  const scale = preset.scale > 0 ? preset.scale : 1;
   // 快照会把图片内联进 SVG；原图过大时（照片背景会让同一张图内联两次）WebKit 会整块丢弃，
   // 因此先压到本次导出实际需要的分辨率，抓完再还原
   const restoreImages = await capEmbeddedImages(element, { scale });
@@ -103,6 +109,54 @@ export async function resolveExportDirectory(): Promise<string | null> {
   }
 }
 
+/** 子文件夹名收敛成单段目录名：剥掉路径分隔符与非法字符，避免逃出目标目录。 */
+function sanitizeSubfolder(name: string): string | null {
+  const cleaned = name
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/^\.+$/, '')
+    .trim();
+  return cleaned || null;
+}
+
+/**
+ * 按预设的存储选项解算落盘目录（已拼上子文件夹）。
+ *
+ * - `app-dir`：设置 → 导出里的「文件导出目录」
+ * - `source-dir`：原图所在目录；没有原图（拼图画布）时回落到导出目录
+ * - `custom`：预设自带目录；目录无效时同样回落
+ *
+ * 子目录本身由 Rust 落盘时 `create_dir_all` 顺带创建。返回 null 表示读不到
+ * 可用目录，调用方会退回保存对话框兜底。
+ */
+export async function resolveProfileOutputDir(
+  profile: ExportPresetProfile,
+  sourcePath?: string,
+): Promise<string | null> {
+  let dir: string | null = null;
+
+  if (profile.destination === 'source-dir' && sourcePath) {
+    const trimmed = sourcePath.replace(/[/\\]+$/, '');
+    const cut = trimmed.search(/[/\\][^/\\]*$/);
+    if (cut > 0) {
+      const head = trimmed.slice(0, cut);
+      // Windows 盘符根目录（C:\file.jpg → "C:"）补上斜杠才是绝对路径
+      dir = /^[A-Za-z]:$/.test(head) ? `${head}/` : head;
+    }
+  } else if (profile.destination === 'custom') {
+    dir = profile.customPath?.trim() || null;
+  }
+
+  if (!dir) {
+    dir = await resolveExportDirectory();
+  }
+  if (!dir) {
+    return null;
+  }
+
+  const subfolder = profile.subfolder ? sanitizeSubfolder(profile.subfolder) : null;
+  return subfolder ? `${dir}/${subfolder}` : dir;
+}
+
 /** 去掉文件名里的路径分隔符与非法字符，避免写到目标目录之外。 */
 function sanitizeFileName(name: string): string {
   return (
@@ -124,21 +178,37 @@ const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|webp)$/i;
 /**
  * 生成最终文件名。
  *
- * 名字优先用档位自己填的 `fileName`，留空则回落到 `<原图名>@<宽>x<高>`；
- * 扩展名始终由 `format` 决定，同批次重名时追加序号。
+ * 名字优先用档位自己填的 `fileName`，留空则回落到 `<主干>@<宽>x<高>`（宽高取
+ * 尺寸适配器实际命中的目标框）；扩展名始终由 `format` 决定。
+ *
+ * `unique-name`（缺省）在批内去重的基础上再查一次磁盘，已存在就追加序号；
+ * `overwrite` 直接用原名覆盖。
  */
-function buildFileName(baseName: string, preset: ExportPreset, used: Set<string>): string {
+async function buildOutputFileName(
+  baseName: string,
+  preset: ExportPreset,
+  target: ExportTarget,
+  used: Set<string>,
+  outputDir: string | null | undefined,
+  conflict: ExportConflictStrategy | undefined,
+): Promise<string> {
   const ext = extensionOf(preset.format);
   const custom = preset.fileName?.trim();
+  const width = Math.round(target.width);
+  const height = Math.round(target.height);
   const rawStem = custom
     ? custom.replace(IMAGE_EXTENSION_PATTERN, '')
-    : `${baseName}@${preset.width}x${preset.height}`;
+    : `${baseName}@${width}x${height}`;
   const stem = sanitizeFileName(rawStem) || baseName;
 
+  const unique = conflict !== 'overwrite';
   let candidate = `${stem}.${ext}`;
   let index = 2;
 
-  while (used.has(candidate)) {
+  while (
+    unique &&
+    (used.has(candidate) || (outputDir ? await pathExists(`${outputDir}/${candidate}`) : false))
+  ) {
     candidate = `${stem}-${index}.${ext}`;
     index += 1;
   }
@@ -201,6 +271,9 @@ export function cancelExportTask(taskId: string) {
 /**
  * 按档位逐个导出当前画面。
  *
+ * 尺寸适配器（若提供）先解算并应用目标框，实际命中的尺寸用于自动命名；
+ * 没有适配器时按 `ExportPreset` 的宽高直接抓图。
+ *
  * 注意：`options.dpi` 目前只承载语义，尚未写入 EXIF——后端还没有对应的
  * 分辨率写入命令（`src-tauri/src/exif.rs` 只有读取与 JPEG EXIF 段替换）。
  */
@@ -214,12 +287,28 @@ export async function exportSingle(
   const used = new Set<string>();
 
   for (const preset of options.presets) {
-    let bytes = await captureElement(element, preset, options, context);
-    const fileName = buildFileName(baseName, preset, used);
+    // 尺寸解算交给页面侧的适配器：只有它知道背景模式与画布结构
+    const target = context?.sizeAdapter
+      ? await context.sizeAdapter.prepare()
+      : { width: preset.width, height: preset.height };
+
+    let bytes = await captureElement(element, preset, options);
+    const fileName = await buildOutputFileName(
+      baseName,
+      preset,
+      target,
+      used,
+      context?.outputDir,
+      context?.conflict,
+    );
 
     if (options.preserveExif && preset.format === 'jpeg' && source) {
       try {
-        const exifSeg = await extractJpegExif(source);
+        let exifSeg = await extractJpegExif(source);
+        if (options.stripGps) {
+          // 保留 EXIF 的同时按预设抹掉 GPS 位置信息（结构异常时 Rust 侧原样返回）
+          exifSeg = await stripExifGps(exifSeg);
+        }
         const result = await insertJpegExif(Array.from(bytes), exifSeg);
         bytes = new Uint8Array(result);
       } catch (err) {
@@ -249,8 +338,19 @@ export async function exportBatch(
 
     try {
       for (const preset of options.presets) {
-        const bytes = await captureElement(elements[i], preset, options, context);
-        const fileName = buildFileName(`${baseName}-${i + 1}`, preset, used);
+        const target = context?.sizeAdapter
+          ? await context.sizeAdapter.prepare()
+          : { width: preset.width, height: preset.height };
+
+        const bytes = await captureElement(elements[i], preset, options);
+        const fileName = await buildOutputFileName(
+          `${baseName}-${i + 1}`,
+          preset,
+          target,
+          used,
+          context?.outputDir,
+          context?.conflict,
+        );
         await saveBytes(bytes, fileName, extensionOf(preset.format), context?.outputDir);
       }
 

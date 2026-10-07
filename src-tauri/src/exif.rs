@@ -252,3 +252,160 @@ pub fn insert_jpeg_exif(jpeg_data: Vec<u8>, exif_segment: Vec<u8>) -> Result<Vec
 
     Ok(result)
 }
+
+fn read_u16(data: &[u8], at: usize, big_endian: bool) -> Option<u16> {
+    let bytes = data.get(at..at + 2)?;
+    let arr = [bytes[0], bytes[1]];
+    Some(if big_endian {
+        u16::from_be_bytes(arr)
+    } else {
+        u16::from_le_bytes(arr)
+    })
+}
+
+fn read_u32(data: &[u8], at: usize, big_endian: bool) -> Option<u32> {
+    let bytes = data.get(at..at + 4)?;
+    let arr = [bytes[0], bytes[1], bytes[2], bytes[3]];
+    Some(if big_endian {
+        u32::from_be_bytes(arr)
+    } else {
+        u32::from_le_bytes(arr)
+    })
+}
+
+fn write_u16(data: &mut [u8], at: usize, value: u16, big_endian: bool) {
+    let bytes = if big_endian {
+        value.to_be_bytes()
+    } else {
+        value.to_le_bytes()
+    };
+    data[at..at + 2].copy_from_slice(&bytes);
+}
+
+/// 删除 EXIF APP1 段里的 GPS 位置信息：抹掉 IFD0 中的 GPSInfo 指针（0x8825）。
+///
+/// 只改条目表（2 字节计数 + 每条 12 字节）与段长度字段，数据区原地不动，
+/// 其余字段的偏移量因此仍然有效；GPS 数据块变成无人引用的字节，读取方按
+/// 指针寻址，不会再看到位置。结构与预期不符时原样返回，绝不把可读的 EXIF 改坏。
+#[tauri::command]
+pub fn strip_exif_gps(exif_segment: Vec<u8>) -> Vec<u8> {
+    const GPS_INFO_POINTER: u16 = 0x8825;
+    // APP1 头 4 字节（FF E1 len）+ "Exif\0\0" 6 字节
+    const TIFF_START: usize = 10;
+
+    // 段长度字段是大端 u16（值 = 段总长 - 2），超出范围就不动它
+    if exif_segment.len() < TIFF_START + 8 || exif_segment.len() - 2 > u16::MAX as usize {
+        return exif_segment;
+    }
+    if exif_segment[0] != 0xFF || exif_segment[1] != 0xE1 || &exif_segment[4..10] != b"Exif\0\0" {
+        return exif_segment;
+    }
+
+    let tiff = TIFF_START;
+    let big_endian = match exif_segment.get(tiff..tiff + 2) {
+        Some(bytes) if bytes == b"MM" => true,
+        Some(bytes) if bytes == b"II" => false,
+        _ => return exif_segment,
+    };
+    // TIFF 魔数 42
+    if read_u16(&exif_segment, tiff + 2, big_endian) != Some(42) {
+        return exif_segment;
+    }
+    // IFD0 偏移相对 TIFF 头
+    let ifd0 = match read_u32(&exif_segment, tiff + 4, big_endian) {
+        Some(offset) => tiff + offset as usize,
+        None => return exif_segment,
+    };
+    let count = match read_u16(&exif_segment, ifd0, big_endian) {
+        Some(count) => count as usize,
+        None => return exif_segment,
+    };
+
+    // 在 IFD0 条目里找 GPSInfo 指针
+    let entries = ifd0 + 2;
+    let mut gps_at = None;
+    for index in 0..count {
+        let at = entries + index * 12;
+        match read_u16(&exif_segment, at, big_endian) {
+            Some(tag) if tag == GPS_INFO_POINTER => {
+                gps_at = Some(at);
+                break;
+            }
+            Some(_) => continue,
+            None => return exif_segment,
+        }
+    }
+    let gps_at = match gps_at {
+        Some(at) if at + 12 <= exif_segment.len() => at,
+        _ => return exif_segment,
+    };
+
+    let mut result = exif_segment.clone();
+    result.drain(gps_at..gps_at + 12);
+    write_u16(&mut result, ifd0, (count - 1) as u16, big_endian);
+    // APP1 段长度字段（大端，值 = 段总长 - 2）同步收缩 12 字节
+    let length = (result.len() - 2) as u16;
+    result[2..4].copy_from_slice(&length.to_be_bytes());
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造最小 APP1 段：IFD0 含 Make(0x010F)，`with_gps` 再追加 GPSInfo(0x8825)。
+    fn build_segment(with_gps: bool) -> Vec<u8> {
+        let mut seg = vec![0xFF, 0xE1, 0x00, 0x00]; // 段长度占位
+        seg.extend_from_slice(b"Exif\0\0");
+        // TIFF 头：II（小端）、魔数 42、IFD0 偏移 8
+        seg.extend_from_slice(&[0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00]);
+        let entry_count: u16 = if with_gps { 2 } else { 1 };
+        seg.extend_from_slice(&entry_count.to_le_bytes());
+        // Make 0x010F，ASCII(2)，count 5，值偏移 0x30
+        seg.extend_from_slice(&[
+            0x0F, 0x01, 0x02, 0x00, 0x05, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00,
+        ]);
+        if with_gps {
+            // GPSInfo 0x8825，LONG(4)，count 1，值 = GPS IFD 偏移
+            seg.extend_from_slice(&[
+                0x25, 0x88, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+            ]);
+        }
+        // 下一 IFD 指针 0 + 一段数据区（被剥离后成为孤儿字节）
+        seg.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        seg.extend_from_slice(&[0xAA; 16]);
+        let length = (seg.len() - 2) as u16;
+        seg[2..4].copy_from_slice(&length.to_be_bytes());
+        seg
+    }
+
+    #[test]
+    fn strips_gps_pointer_and_keeps_other_entries() {
+        let seg = build_segment(true);
+        let out = strip_exif_gps(seg.clone());
+
+        // 少了一条 12 字节条目
+        assert_eq!(out.len(), seg.len() - 12);
+        // 条目计数 2 → 1，第一条 Make 原地保留
+        assert_eq!(read_u16(&out, 18, false), Some(1));
+        assert_eq!(read_u16(&out, 20, false), Some(0x010F));
+        // GPS 条目位置现在是「下一 IFD 指针」（0）
+        assert_eq!(read_u16(&out, 32, false), Some(0));
+        // 段长度字段与实际长度一致
+        assert_eq!(u16::from_be_bytes([out[2], out[3]]) as usize, out.len() - 2);
+        // 数据区字节未被搅动（偏移后仍在）
+        assert!(out.ends_with(&[0xAA; 16]));
+    }
+
+    #[test]
+    fn returns_original_when_no_gps_entry() {
+        let seg = build_segment(false);
+        assert_eq!(strip_exif_gps(seg.clone()), seg);
+    }
+
+    #[test]
+    fn returns_original_on_malformed_input() {
+        let garbage = vec![0x00, 0x01, 0x02, 0x03, 0x04];
+        assert_eq!(strip_exif_gps(garbage.clone()), garbage);
+    }
+}

@@ -2,7 +2,6 @@ import type {
   CollageAnnotation,
   CollageAspectPreset,
   CollageCanvasState,
-  CollageExportQuality,
   CollageSlotState,
 } from './types';
 
@@ -20,12 +19,6 @@ export const COLLAGE_RATIO_OPTIONS: Array<{
   { label: '3:4', width: 3, height: 4 },
   { label: '16:10', width: 16, height: 10 },
 ];
-
-export const COLLAGE_EXPORT_LABELS: Record<CollageExportQuality, string> = {
-  standard: '标准',
-  high: '高清',
-  ultra: '超清',
-};
 
 export function createEmptySlotState(): CollageSlotState {
   return {
@@ -144,20 +137,5 @@ export async function measureImageAsset(src: string): Promise<{ width: number; h
       image.onerror = () => reject(new Error('图片尺寸读取失败'));
       image.src = src;
     });
-  }
-}
-
-export function getExportOptions(quality: CollageExportQuality): {
-  scale: number;
-  quality: number;
-  dpi: number;
-} {
-  switch (quality) {
-    case 'high':
-      return { scale: 2, quality: 94, dpi: 144 };
-    case 'ultra':
-      return { scale: 3, quality: 98, dpi: 216 };
-    default:
-      return { scale: 1, quality: 90, dpi: 72 };
   }
 }

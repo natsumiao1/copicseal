@@ -8,20 +8,23 @@ import { DockviewReact, themeLight } from 'dockview-react';
 import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import type { AppRoute } from '@/app/routes';
+import { usePageActive } from '@/shared/providers/page-activity-provider';
 import { useWorkbenchDockStore } from '@/shared/store/use-workbench-dock-store';
 import 'dockview-react/dist/styles/dockview.css';
 import './business-workbench.css';
 
 /**
- * 工作台的六个停靠面板：文件夹 / 收藏夹 / 筛选器 / 内容 / 预览 / 调整。
+ * 工作台的七个停靠面板：文件夹 / 收藏夹 / 筛选器 / 内容 / 预览 / 调整 / 导出。
  *
  * 每个面板都是一个矩形区域，顶部带 tab 条；面板之间可以拖动换位、四向分割，
  * 拖到另一个面板中心则合并成同组的两个 tab。默认布局里「收藏夹」与「文件夹」
- * 同组（第一栏上半的两个 tab），「筛选器」停靠在文件夹栏正下方。
- * 布局整体持久化（见 `useWorkbenchDockStore`），关闭的面板从顶栏「视图」菜单恢复。
+ * 同组（第一栏上半的两个 tab），「筛选器」停靠在文件夹栏正下方，
+ * 「导出」停靠在调整面板正下方。布局整体持久化（见 `useWorkbenchDockStore`），
+ * 关闭的面板从顶栏「视图」菜单恢复。
  *
- * `defaultRatio` 的含义随位置而定：顶层栏位是宽度比例；左栏内部的「筛选器」
- * 是其在栏内的高度比例（文件夹组占其余部分），见 `applyDefaultRatios`。
+ * `defaultRatio` 的含义随位置而定：顶层栏位是宽度比例；纵向列里下半面板
+ * （筛选器 / 导出）的 `defaultRatio` 是它在列内的高度比例，上半面板占其余部分，
+ * 见 `applyDefaultRatios`。
  */
 export const WORKBENCH_PANELS = {
   folder: { title: '文件夹', minimumWidth: 140, defaultRatio: 0.15 },
@@ -30,6 +33,7 @@ export const WORKBENCH_PANELS = {
   content: { title: '内容', minimumWidth: 170, defaultRatio: 0.2 },
   workspace: { title: '预览', minimumWidth: 240, defaultRatio: 0.45 },
   properties: { title: '调整', minimumWidth: 180, defaultRatio: 0.2 },
+  export: { title: '导出', minimumWidth: 200, defaultRatio: 0.4 },
 } as const satisfies Record<string, { title: string; minimumWidth: number; defaultRatio: number }>;
 
 export type WorkbenchPanelId = keyof typeof WORKBENCH_PANELS;
@@ -49,6 +53,18 @@ const DEFAULT_LAYOUT_LEAVES: readonly WorkbenchPanelId[] = [
   'workspace',
   'properties',
 ];
+
+/**
+ * 默认布局里的纵向列：顶层位置 → [上半面板, 下半面板]。
+ *
+ * 上半占其余高度，下半的高度取自身的 `defaultRatio`（见 `applyDefaultRatios`）。
+ */
+const COLUMN_PANELS: Partial<
+  Record<WorkbenchPanelId, { top: WorkbenchPanelId; bottom: WorkbenchPanelId }>
+> = {
+  folder: { top: 'folder', bottom: 'filter' },
+  properties: { top: 'properties', bottom: 'export' },
+};
 
 /** dockview 主题：在内置 light 主题上开 4px 面板缝隙，样式变量见 `business-workbench.css`。 */
 const WORKBENCH_THEME: DockviewTheme = {
@@ -72,6 +88,8 @@ export interface BusinessWorkbenchPanels {
   workspace: ReactNode;
   /** 页面的属性面板；懒求值，内容随选中项变化 */
   properties: () => ReactNode;
+  /** 页面的导出面板（档位配置 + 导出动作 + 进度 / 取消）；懒求值 */
+  export: () => ReactNode;
 }
 
 export interface BusinessWorkbenchProps {
@@ -111,6 +129,7 @@ const PANEL_COMPONENTS: Record<WorkbenchPanelId, ReturnType<typeof createPanelCo
   content: createPanelContent((panels) => panels.content),
   workspace: createPanelContent((panels) => panels.workspace),
   properties: createPanelContent((panels) => panels.properties()),
+  export: createPanelContent((panels) => panels.export()),
 };
 
 /**
@@ -191,6 +210,15 @@ function buildDefaultLayout(api: DockviewApi) {
     position: { referencePanel: 'workspace', direction: 'right' },
     initialWidth: 300,
   });
+  // 导出停靠在调整面板下方：在四栏成形之后向下分栏，只拆分调整那一栏
+  api.addPanel({
+    id: 'export',
+    component: 'export',
+    title: WORKBENCH_PANELS.export.title,
+    minimumWidth: WORKBENCH_PANELS.export.minimumWidth,
+    position: { referencePanel: 'properties', direction: 'below' },
+    inactive: true,
+  });
   // 必须在四栏成形之后再向下分栏：此时根节点已是横向分支，
   // 「below 文件夹」会在首栏位置插入纵向分支，不会影响右侧三栏
   api.addPanel({
@@ -210,11 +238,11 @@ function buildDefaultLayout(api: DockviewApi) {
  *
  * dockview 对 `initialWidth` 只是「尽力而为」，直接按 addPanel 的结果落地宽度
  * 不可控；这里读出序列化布局、改写尺寸后写回，让首屏稳定在
- * 文件夹栏 15% / 内容 20% / 预览 45% / 调整 20%。
+ * 文件夹栏 15% / 内容 20% / 预览 45% / 调整栏 20%。
  *
- * 校正两层：顶层四个栏位按 `defaultRatio` 作宽度比例——首栏不是单一叶子，
- * 而是「文件夹组 + 筛选器」的纵向列；列内再按筛选器的 `defaultRatio`（高度
- * 比例）分高，文件夹组占其余部分。结构与预期不符时保持原样。
+ * 校正两层：顶层四个栏位按 `defaultRatio` 作宽度比例——首栏是「文件夹组 +
+ * 筛选器」的纵向列、调整栏是「调整 + 导出」的纵向列；列内再按下半面板
+ * `defaultRatio`（高度比例）分高，上半面板占其余部分。结构与预期不符时保持原样。
  */
 function applyDefaultRatios(api: DockviewApi) {
   try {
@@ -235,25 +263,26 @@ function applyDefaultRatios(api: DockviewApi) {
       const node = leaves[index];
 
       if (node.type === 'branch') {
-        // 纵向列只允许出现在首栏（文件夹 + 收藏夹 / 筛选器）；
+        // 纵向列只允许出现在首栏（文件夹组 + 筛选器）与调整栏（调整 + 导出）；
         // 不假设列内先后顺序，按面板 id 定位两个叶子
-        if (expected !== 'folder' || !Array.isArray(node.data) || node.data.length !== 2) {
+        const column = COLUMN_PANELS[expected];
+        if (!column || !Array.isArray(node.data) || node.data.length !== 2) {
           return;
         }
         const isLeafWith = (child: (typeof node.data)[number], id: WorkbenchPanelId) =>
           child.type === 'leaf' &&
           !Array.isArray(child.data) &&
           child.data.views?.includes(id) === true;
-        const folderLeaf = node.data.find((child) => isLeafWith(child, 'folder'));
-        const filterLeaf = node.data.find((child) => isLeafWith(child, 'filter'));
-        if (!folderLeaf || !filterLeaf || folderLeaf === filterLeaf) {
+        const topLeaf = node.data.find((child) => isLeafWith(child, column.top));
+        const bottomLeaf = node.data.find((child) => isLeafWith(child, column.bottom));
+        if (!topLeaf || !bottomLeaf || topLeaf === bottomLeaf) {
           return;
         }
         const columnSize = Math.round(ratio * 1000);
-        const filterSize = Math.round(columnSize * WORKBENCH_PANELS.filter.defaultRatio);
+        const bottomSize = Math.round(columnSize * WORKBENCH_PANELS[column.bottom].defaultRatio);
         node.size = columnSize;
-        folderLeaf.size = columnSize - filterSize;
-        filterLeaf.size = filterSize;
+        topLeaf.size = columnSize - bottomSize;
+        bottomLeaf.size = bottomSize;
         total += columnSize;
         continue;
       }
@@ -286,6 +315,7 @@ const PANEL_RESTORE_GROUPING: Partial<
 > = {
   favorites: { reference: 'folder', direction: 'within' },
   filter: { reference: 'folder', direction: 'below' },
+  export: { reference: 'properties', direction: 'below' },
 };
 
 function addPanelAtRestorePosition(api: DockviewApi, id: WorkbenchPanelId) {
@@ -366,6 +396,36 @@ function ensureFilterPanel(api: DockviewApi, store: typeof useWorkbenchDockStore
 }
 
 /**
+ * 给升级前保存的布局补挂「导出」面板：默认布局自带它，只有旧布局缺失，
+ * 首次加载时停靠到调整面板下方。补挂一次后由 `exportSeeded` 记住，
+ * 之后用户手动关闭 / 移走它，重启仍以布局本身为准。
+ */
+function ensureExportPanel(api: DockviewApi, store: typeof useWorkbenchDockStore) {
+  if (store.getState().exportSeeded) {
+    return;
+  }
+  try {
+    if (!api.getPanel('export') && api.getPanel('properties')) {
+      api.addPanel({
+        id: 'export',
+        component: 'export',
+        title: WORKBENCH_PANELS.export.title,
+        minimumWidth: WORKBENCH_PANELS.export.minimumWidth,
+        position: { referencePanel: 'properties', direction: 'below' },
+        inactive: true,
+      });
+      // 并入调整栏时把激活 tab 还给调整，避免导出抢焦点
+      api.getPanel('properties')?.api.setActive();
+      // 同 ensureFavoritesPanel：立刻写回，防抖回写可能被 StrictMode 重挂载清掉
+      store.getState().setLayout(api.toJSON());
+    }
+    store.getState().markExportSeeded();
+  } catch (error) {
+    console.warn('[workbench] 补挂导出面板失败:', error);
+  }
+}
+
+/**
  * 面板标题以 `WORKBENCH_PANELS` 为准：持久化布局里存着改名前的旧标题
  * （如「预览区」「调整区」），恢复后统一刷成当前名称，否则改名对老布局不生效。
  */
@@ -397,8 +457,16 @@ export function setWorkbenchPanelVisible(route: AppRoute, id: WorkbenchPanelId, 
 }
 
 export function BusinessWorkbench({ header, routeKey, panels }: BusinessWorkbenchProps) {
+  // 功能页常驻挂载、隐藏只改可见性：布局同步必须只由激活页参与，
+  // 否则可见页写回 → 隐藏页应用后再写回 → 可见页又应用，形成往返回环
+  // （表现为界面不停闪烁、面板尺寸被反复校正挤回去）
+  const active = usePageActive();
+  const activeRef = useRef(active);
+  activeRef.current = active;
   // 每个 dockview 实例一套订阅；StrictMode 双挂载时先清上一套再挂新一套
   const cleanupRef = useRef<(() => void) | null>(null);
+  // 立刻落盘本页未写回的布局（切走页面时由下方 effect 调用）
+  const flushLayoutWriteRef = useRef<(() => void) | null>(null);
 
   const handleReady = useCallback(
     (event: DockviewReadyEvent) => {
@@ -422,9 +490,10 @@ export function BusinessWorkbench({ header, routeKey, panels }: BusinessWorkbenc
       if (!restored) {
         buildDefaultLayout(api);
       }
-      // 升级前保存的布局里没有收藏夹 tab / 筛选器面板，首次加载补挂（默认布局自带时为空操作）
+      // 升级前保存的布局里没有收藏夹 tab / 筛选器 / 导出面板，首次加载补挂（默认布局自带时为空操作）
       ensureFavoritesPanel(api, store);
       ensureFilterPanel(api, store);
+      ensureExportPanel(api, store);
       // 改过名的面板标题（预览区 → 预览等）对旧布局统一刷新
       syncPanelTitles(api);
 
@@ -435,22 +504,44 @@ export function BusinessWorkbench({ header, routeKey, panels }: BusinessWorkbenc
         store.getState().setLayout(api.toJSON());
       }
 
-      // 本页布局变化 → 防抖写回共享布局（另一页与重启后都以此为准）
+      const writeLayout = () => {
+        const next = api.toJSON();
+        const state = store.getState();
+        if (JSON.stringify(next) !== JSON.stringify(state.layout)) {
+          state.setLayout(next);
+        }
+      };
+
+      // 本页布局变化 → 防抖写回共享布局（另一页与重启后都以此为准）。
+      // 排程在事件发生时校验激活态：隐藏页的布局变化（含应用共享布局的回声）
+      // 一律不写回；已排程的回调照常落盘，切走页面时由 flush 立即收尾
       let writeTimer: number | undefined;
-      const layoutDisposable = api.onDidLayoutChange(() => {
+      const scheduleWrite = () => {
         window.clearTimeout(writeTimer);
         writeTimer = window.setTimeout(() => {
-          const next = api.toJSON();
-          const state = store.getState();
-          if (JSON.stringify(next) !== JSON.stringify(state.layout)) {
-            state.setLayout(next);
-          }
+          writeTimer = undefined;
+          writeLayout();
         }, 250);
+      };
+      const flushLayoutWrite = () => {
+        if (writeTimer !== undefined) {
+          window.clearTimeout(writeTimer);
+          writeTimer = undefined;
+          writeLayout();
+        }
+      };
+      flushLayoutWriteRef.current = flushLayoutWrite;
+
+      const layoutDisposable = api.onDidLayoutChange(() => {
+        if (activeRef.current) {
+          scheduleWrite();
+        }
       });
 
-      // 共享布局变化（另一页或视图菜单触发）→ 同步到本页；内容一致时跳过避免回环
+      // 共享布局变化（另一页或视图菜单触发）→ 仅激活页应用到本页；
+      // 隐藏页不订阅应用，重新激活时由下方 effect 统一同步一次
       const unsubscribe = store.subscribe((state, previous) => {
-        if (state.layout === previous.layout || !state.layout) {
+        if (state.layout === previous.layout || !state.layout || !activeRef.current) {
           return;
         }
         try {
@@ -463,7 +554,9 @@ export function BusinessWorkbench({ header, routeKey, panels }: BusinessWorkbenc
       });
 
       cleanupRef.current = () => {
-        window.clearTimeout(writeTimer);
+        // 卸载前把未落盘的改动写回，避免最后一次调整丢失
+        flushLayoutWrite();
+        flushLayoutWriteRef.current = null;
         try {
           layoutDisposable.dispose();
         } catch (error) {
@@ -476,6 +569,28 @@ export function BusinessWorkbench({ header, routeKey, panels }: BusinessWorkbenc
     },
     [routeKey],
   );
+
+  // 页面可见性切换：切走时立刻落盘本页改动；切回时应用共享布局
+  // （隐藏期间另一页的改动不会推给本页，都在这里补齐）
+  useEffect(() => {
+    if (!active) {
+      flushLayoutWriteRef.current?.();
+      return;
+    }
+    const store = useWorkbenchDockStore;
+    const layout = store.getState().layout;
+    const api = store.getState().apis[routeKey];
+    if (!api || !layout) {
+      return;
+    }
+    try {
+      if (JSON.stringify(api.toJSON()) !== JSON.stringify(layout)) {
+        api.fromJSON(layout);
+      }
+    } catch (error) {
+      console.warn('[workbench] 激活时同步停靠布局失败:', error);
+    }
+  }, [active, routeKey]);
 
   useEffect(
     () => () => {

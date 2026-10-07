@@ -26,6 +26,10 @@ interface WorkbenchDockState {
    * 「筛选器」面板是否已随布局初始化过（同 `favoritesSeeded`，补挂到文件夹栏下方）。
    */
   filterSeeded: boolean;
+  /**
+   * 「导出」面板是否已随布局初始化过（同 `favoritesSeeded`，补挂到调整面板下方）。
+   */
+  exportSeeded: boolean;
   /** 各功能页工作台的 dockview 实例（不持久化）；顶栏「视图」菜单按当前路由取用 */
   apis: Partial<Record<AppRoute, DockviewApi>>;
   setLayout: (layout: SerializedDockview) => void;
@@ -33,6 +37,8 @@ interface WorkbenchDockState {
   markFavoritesSeeded: () => void;
   /** 标记筛选器面板已并入布局（见 `filterSeeded`） */
   markFilterSeeded: () => void;
+  /** 标记导出面板已并入布局（见 `exportSeeded`） */
+  markExportSeeded: () => void;
   /** 注册 / 注销本页的 dockview 实例（传 null 注销） */
   registerApi: (route: AppRoute, api: DockviewApi | null) => void;
 }
@@ -43,10 +49,12 @@ export const useWorkbenchDockStore = create<WorkbenchDockState>()(
       layout: null,
       favoritesSeeded: false,
       filterSeeded: false,
+      exportSeeded: false,
       apis: {},
       setLayout: (layout) => set({ layout }),
       markFavoritesSeeded: () => set({ favoritesSeeded: true }),
       markFilterSeeded: () => set({ filterSeeded: true }),
+      markExportSeeded: () => set({ exportSeeded: true }),
       registerApi: (route, api) =>
         set((state) => ({ apis: { ...state.apis, [route]: api ?? undefined } })),
     }),
@@ -59,6 +67,7 @@ export const useWorkbenchDockStore = create<WorkbenchDockState>()(
         layout: state.layout,
         favoritesSeeded: state.favoritesSeeded,
         filterSeeded: state.filterSeeded,
+        exportSeeded: state.exportSeeded,
       }),
     },
   ),
