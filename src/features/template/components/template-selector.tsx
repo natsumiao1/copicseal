@@ -70,6 +70,7 @@ export function TemplateSelector({ activeTemplateId, onTemplateChange }: Templat
 
   return (
     <CoPanelSection
+      variant="flat"
       title="模板"
       actions={
         <Button
