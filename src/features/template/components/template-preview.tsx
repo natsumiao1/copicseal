@@ -35,15 +35,11 @@ interface TemplatePreviewProps {
 /**
  * 画布与预览视口之间的留白（px）。
  *
- * 无背景时留一点余量给画框描边与投影；有背景时留白取 0，背景直接铺满预览区。
- * 同一个值既要作为滚动内容的 padding，又要从视口尺寸里扣掉才是可用区，
- * 两边必须同源，因此不写成 Tailwind 的 `p-*`，避免改了类名忘了改解算。
+ * 画框按比例 contain 进预览区（不再铺满），四周统一留出边距：无背景时给描边与投影
+ * 留余量，有背景时让画框不贴边。同一个值既要作为滚动内容的 padding，又要从视口尺寸
+ * 里扣掉才是可用区，两边必须同源，因此不写成 Tailwind 的 `p-*`，避免改了类名忘了改解算。
  */
 const PREVIEW_GUTTER = 16;
-
-function previewGutter(background: TemplateBackground): number {
-  return background.mode === 'none' ? PREVIEW_GUTTER : 0;
-}
 
 export function TemplatePreview({
   templateId,
@@ -122,10 +118,9 @@ export function TemplatePreview({
       return;
     }
 
-    const gutter = previewGutter(background);
     const available = {
-      width: viewport.width - gutter * 2,
-      height: viewport.height - gutter * 2,
+      width: viewport.width - PREVIEW_GUTTER * 2,
+      height: viewport.height - PREVIEW_GUTTER * 2,
     };
     if (available.width <= 0 || available.height <= 0) {
       return;
@@ -171,7 +166,7 @@ export function TemplatePreview({
           <div
             className="box-border flex items-center justify-center"
             style={{
-              padding: previewGutter(background),
+              padding: PREVIEW_GUTTER,
               // 最小尺寸等于视口：装得下时居中，装不下时随内容一起增长而不是被裁掉。
               // 向下取整，避免亚像素让滚动区凭空多出 1px 而出现滚动条
               minWidth: Math.floor(viewport.width),
@@ -180,7 +175,7 @@ export function TemplatePreview({
           >
             {/*
               画框描边与投影只作预览提示，画在快照目标之外，不会进入导出结果。
-              有背景时画框就是背景本身且铺满预览区，再挂描边只会被视口裁掉。
+              有背景时画框以背景自身为边界（背景已与留白区分），不再叠描边。
             */}
             <div
               className={background.mode === 'none' ? 'shadow-xl ring-1 ring-foreground/15' : ''}

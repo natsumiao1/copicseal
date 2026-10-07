@@ -70,10 +70,48 @@ export const TEMPLATE_BACKGROUND_FIELDS = [
     step: 0.005,
     visibleWhen: { key: 'mode', equals: ['color', 'image'] },
   },
+  {
+    key: 'frameAspect',
+    label: '画框比例',
+    description: '有背景时画框的横竖比例；自动为跟随照片，竖照片也可选横向让模糊背景横排。',
+    type: 'select',
+    default: 'auto',
+    options: [
+      { label: '自动（跟随照片）', value: 'auto' },
+      { label: '1:1', value: '1:1' },
+      { label: '3:2（横）', value: '3:2' },
+      { label: '2:3（竖）', value: '2:3' },
+      { label: '4:3（横）', value: '4:3' },
+      { label: '3:4（竖）', value: '3:4' },
+      { label: '16:9（横）', value: '16:9' },
+      { label: '9:16（竖）', value: '9:16' },
+      { label: '16:10（横）', value: '16:10' },
+      { label: '10:16（竖）', value: '10:16' },
+    ],
+    visibleWhen: { key: 'mode', equals: ['color', 'image'] },
+  },
 ] as const satisfies readonly TemplateField[];
 
 /** 背景参数由字段清单推导，字段即唯一真相源。 */
 export type TemplateBackground = TemplateParams<typeof TEMPLATE_BACKGROUND_FIELDS>;
+
+/**
+ * 画框比例（宽 / 高）。
+ *
+ * 手动选择时返回解析出的数值比例；「自动」、无背景或取值非法时返回 null，
+ * 调用方回落到画布（照片）自身的比例——横竖因此始终有确定来源。
+ */
+export function resolveFrameAspect(background: TemplateBackground): number | null {
+  if (background.mode === 'none' || background.frameAspect === 'auto') {
+    return null;
+  }
+
+  const [width, height] = background.frameAspect.split(':').map((part) => Number.parseFloat(part));
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return width / height;
+}
 
 /**
  * 合并模板自带的背景默认值，产出一份完整可用的背景参数。
