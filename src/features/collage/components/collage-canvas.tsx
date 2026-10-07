@@ -599,9 +599,8 @@ export function CollageCanvas({
                         'group absolute aspect-[4/3] w-[30%] overflow-hidden text-left transition-colors',
                         // contain 留白要透出画布背景：格子底色让位，仅 hover 时给出反馈
                         fillContain ? 'bg-transparent' : 'bg-muted/35',
-                        selectedSlotIndex === index
-                          ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
-                          : 'hover:bg-muted/50',
+                        // 选中描边不画在本元素：内联 boxShadow（含 'none'）会盖掉同元素的 ring 类，改用下方覆盖层
+                        selectedSlotIndex === index ? '' : 'hover:bg-muted/50',
                       )}
                       style={{
                         left: `${baseLeft}%`,
@@ -664,6 +663,13 @@ export function CollageCanvas({
                         )}
                         draggable={false}
                       />
+                      {/* 选中态描边：独立覆盖层——格子自带内联 boxShadow，同元素上的 ring 类会被盖掉 */}
+                      {selectedSlotIndex === index ? (
+                        <div
+                          className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-primary"
+                          style={{ borderRadius: slot.borderRadius ?? present.canvas.borderRadius }}
+                        />
+                      ) : null}
                     </button>
                   );
                 })}
@@ -694,9 +700,8 @@ export function CollageCanvas({
                         'group relative overflow-hidden text-left transition-colors',
                         // contain 下已有照片的格子底色让位给画布背景，空槽位保留占位底色
                         photo && fillContain ? 'bg-transparent' : 'bg-muted/35',
-                        selectedSlotIndex === index
-                          ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
-                          : 'hover:bg-muted/50',
+                        // 选中描边不画在本元素：内联 boxShadow（含 'none'）会盖掉同元素的 ring 类，改用下方覆盖层
+                        selectedSlotIndex === index ? '' : 'hover:bg-muted/50',
                       )}
                       style={{
                         gridColumn: `${gridSlot.x + 1} / span ${gridSlot.w}`,
@@ -765,6 +770,15 @@ export function CollageCanvas({
                           <span className="text-xs">点击填充当前图片</span>
                         </div>
                       )}
+                      {/* 选中态描边：独立覆盖层——格子自带内联 boxShadow，同元素上的 ring 类会被盖掉 */}
+                      {selectedSlotIndex === index ? (
+                        <div
+                          className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-primary"
+                          style={{
+                            borderRadius: slotItem.borderRadius ?? present.canvas.borderRadius,
+                          }}
+                        />
+                      ) : null}
                     </button>
                   );
                 })}
