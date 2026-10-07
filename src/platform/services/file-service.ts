@@ -1,6 +1,7 @@
 import type { FileServiceContract } from '@/platform/contracts/platform';
 import {
   cleanupCache,
+  clearBrowseThumbnail,
   clearCache,
   ensureBrowseThumbnail,
   getCacheOverview,
@@ -10,6 +11,7 @@ import {
   listImageFilesInDirectory,
   listRootDirectories,
   listSubdirectories,
+  moveToTrash,
   readImageFile,
   readImageTags,
   writeBinaryFile,
@@ -30,6 +32,8 @@ export const fileService: FileServiceContract = {
   listFolderImages,
   readImageTags,
   ensureBrowseThumbnail,
+  clearBrowseThumbnail,
+  moveToTrash,
   importImageToCache,
   importImageBytesToCache,
   getCacheOverview,

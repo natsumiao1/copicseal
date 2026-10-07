@@ -1,5 +1,6 @@
-import { FolderOpen, Images, Loader2, X } from 'lucide-react';
+import { Eraser, FolderOpen, Images, Loader2, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { pathExists, platform, toNativeFileUrl } from '@/platform';
 import type { FolderImageFile } from '@/platform/contracts';
 import { useElementSize } from '@/shared/hooks/use-element-size';
@@ -15,6 +16,22 @@ import {
 import { cn } from '@/shared/lib/utils';
 import { useFileSourceStore } from '@/shared/store/use-file-source-store';
 import { useFilterStore } from '@/shared/store/use-filter-store';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/shared/ui/alert-dialog';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/shared/ui/context-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/shared/ui/tooltip';
 
 /** 网格列间距（对应 `gap-2`）。容器 `px-2` 的内边距不计入 contentRect，无需参与计算。 */
@@ -76,6 +93,8 @@ export function CoContentPanel() {
   const [thumbs, setThumbs] = useState<Map<string, string>>(() => new Map());
   const [cacheDir, setCacheDir] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
+  /** 右键「删除」的待确认目标；null 表示确认弹窗关闭 */
+  const [deleteTarget, setDeleteTarget] = useState<FolderImageFile | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const containerSize = useElementSize(containerRef);
@@ -193,6 +212,54 @@ export function CoContentPanel() {
     }
   }, [ensureThumb, pendingVisible]);
 
+  /**
+   * 确认删除：把文件移入系统回收站，成功后从列表隐藏。
+   *
+   * 已入会话的素材渲染用的是缓存副本，原文件被移走不影响预览与导出，因此不动会话；
+   * 失败只提示不隐藏，条目继续留在列表里。
+   */
+  const trashEntry = useCallback(
+    async (target: FolderImageFile) => {
+      try {
+        await platform.files.moveToTrash(target.path);
+        hideEntry(target.path);
+        toast.success(`已移到回收站：${target.name}`);
+      } catch (error) {
+        console.warn('[file-source] 移入回收站失败:', error);
+        toast.error(`删除失败：${target.name}`, { description: String(error) });
+      }
+    },
+    [hideEntry],
+  );
+
+  /**
+   * 清空该条目的缩略图缓存（派生数据）：状态里同步移除，视口再次滚到时重新生成。
+   *
+   * 导入副本与预览副本是素材会话在用的独立缓存，不在这里动（设置页的缓存清理管它们）。
+   */
+  const clearThumbCache = useCallback(
+    async (target: FolderImageFile) => {
+      if (!cacheDir) {
+        return;
+      }
+      try {
+        const removed = await platform.files.clearBrowseThumbnail(target.path, cacheDir);
+        setThumbs((prev) => {
+          const next = new Map(prev);
+          next.delete(target.path);
+          return next;
+        });
+        toast.success(
+          removed ? `已清空缩略图缓存：${target.name}` : `没有可清的缩略图缓存：${target.name}`,
+        );
+      } catch (error) {
+        console.warn('[file-source] 清空缩略图缓存失败:', error);
+        toast.error(`清空缓存失败：${target.name}`, { description: String(error) });
+      }
+    },
+    [cacheDir],
+  );
+
   const selectedId = sessionPhoto?.id ?? null;
 
   const renderEntry = (entry: FolderImageFile) => {
@@ -200,69 +267,84 @@ export function CoContentPanel() {
     const isSelected = selectedId === entry.path;
 
     return (
-      // biome-ignore lint/a11y/noStaticElementInteractions: 整张卡片是拖拽源；点击由内层 button 承担
-      <div
-        key={entry.path}
-        draggable
-        onDragStart={(event) => {
-          // 画布槽位的 onDrop 按这两个类型读取；不 setData 拖拽就永远是空操作
-          event.dataTransfer.setData('text/copicseal-photo-id', entry.path);
-          event.dataTransfer.setData('text/plain', entry.path);
-          event.dataTransfer.effectAllowed = 'copy';
-        }}
-        className="group relative"
-      >
-        <button
-          type="button"
-          onClick={() => void selectByPath(entry.path)}
-          className="block w-full text-left"
-        >
+      <ContextMenu key={entry.path}>
+        <ContextMenuTrigger asChild>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: 整张卡片是拖拽源；点击由内层 button 承担 */}
           <div
-            className={cn(
-              // 占位正方形：照片完整显示、留白不裁切，横竖图显示面积相当
-              'relative aspect-square overflow-hidden rounded-sm border bg-muted/40 transition-colors',
-              isSelected
-                ? 'border-primary ring-1 ring-primary/40'
-                : 'border-border/70 group-hover:border-primary/40',
-            )}
+            draggable
+            onDragStart={(event) => {
+              // 画布槽位的 onDrop 按这两个类型读取；不 setData 拖拽就永远是空操作
+              event.dataTransfer.setData('text/copicseal-photo-id', entry.path);
+              event.dataTransfer.setData('text/plain', entry.path);
+              event.dataTransfer.effectAllowed = 'copy';
+            }}
+            className="group relative"
           >
-            {thumbUrl ? (
-              <img
-                src={thumbUrl}
-                alt={entry.name}
-                className="h-full w-full object-contain"
-                draggable={false}
-              />
-            ) : (
-              <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-2 text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                <span className="line-clamp-2 text-center text-[10px] leading-tight">
-                  {entry.name}
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-baseline gap-1.5 px-0.5 pt-1 leading-4">
-            <span className="min-w-0 truncate text-[10px] text-foreground/90">{entry.name}</span>
-            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-              {formatSize(entry.size)}
-            </span>
-          </div>
-        </button>
-        <Tooltip>
-          <TooltipTrigger asChild>
             <button
               type="button"
-              aria-label="从列表移除"
-              className="absolute right-1.5 top-1.5 flex size-5 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/75"
-              onClick={() => hideEntry(entry.path)}
+              onClick={() => void selectByPath(entry.path)}
+              className="block w-full text-left"
             >
-              <X className="size-3" />
+              <div
+                className={cn(
+                  // 占位正方形：照片完整显示、留白不裁切，横竖图显示面积相当
+                  'relative aspect-square overflow-hidden rounded-sm border bg-muted/40 transition-colors',
+                  isSelected
+                    ? 'border-primary ring-1 ring-primary/40'
+                    : 'border-border/70 group-hover:border-primary/40',
+                )}
+              >
+                {thumbUrl ? (
+                  <img
+                    src={thumbUrl}
+                    alt={entry.name}
+                    className="h-full w-full object-contain"
+                    draggable={false}
+                  />
+                ) : (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-2 text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    <span className="line-clamp-2 text-center text-[10px] leading-tight">
+                      {entry.name}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-baseline gap-1.5 px-0.5 pt-1 leading-4">
+                <span className="min-w-0 truncate text-[10px] text-foreground/90">
+                  {entry.name}
+                </span>
+                <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                  {formatSize(entry.size)}
+                </span>
+              </div>
             </button>
-          </TooltipTrigger>
-          <TooltipContent side="top">仅从当前列表隐藏，不删除本地文件</TooltipContent>
-        </Tooltip>
-      </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="从列表移除"
+                  className="absolute right-1.5 top-1.5 flex size-5 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/75"
+                  onClick={() => hideEntry(entry.path)}
+                >
+                  <X className="size-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">仅从当前列表隐藏，不删除本地文件</TooltipContent>
+            </Tooltip>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem disabled={!cacheDir} onSelect={() => void clearThumbCache(entry)}>
+            <Eraser />
+            清空缓存
+          </ContextMenuItem>
+          <ContextMenuItem variant="destructive" onSelect={() => setDeleteTarget(entry)}>
+            <Trash2 />
+            删除
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     );
   };
 
@@ -399,6 +481,38 @@ export function CoContentPanel() {
           </div>
         ) : null}
       </div>
+
+      {/* 删除确认：右键菜单点了「删除」才打开；Action 点击后弹窗自行关闭 */}
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>移到回收站？</AlertDialogTitle>
+            <AlertDialogDescription>
+              「{deleteTarget?.name}」将被移到系统回收站，可随时从中恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (deleteTarget) {
+                  void trashEntry(deleteTarget);
+                }
+              }}
+            >
+              移到回收站
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </TooltipProvider>
   );
 }

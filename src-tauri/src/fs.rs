@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
 use std::fs::File;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -409,8 +410,8 @@ fn browse_cache_key(source: &Path) -> Result<String, String> {
     let mut hasher = DefaultHasher::new();
     source.to_string_lossy().hash(&mut hasher);
     mtime.hash(&mut hasher);
-    // 版本盐：直览缩略图从方形裁剪改为等比缩放（Contain），旧缓存整体作废，按龄清理回收
-    "browse-contain-v1".hash(&mut hasher);
+    // 版本盐 v2：缩略图开始烘焙 EXIF 方向（竖图不再横放），v1 的横版缓存整体作废，按视口重新生成
+    "browse-contain-v2-exif-orient".hash(&mut hasher);
     Ok(format!("{:016x}", hasher.finish()))
 }
 
@@ -467,6 +468,54 @@ pub async fn ensure_browse_thumbnail(
         thumbnail_path: thumbnail_path.to_string_lossy().to_string(),
         thumbnail_ready: false,
     })
+}
+
+/// 把图片文件移入系统回收站（Windows 回收站 / macOS 废纸篓），不做永久删除。
+///
+/// 供内容面板右键删除使用：只受理已存在的普通文件，目录不受理，防止误删整个文件夹。
+#[tauri::command]
+pub async fn move_to_trash(path: String) -> Result<(), String> {
+    let source = Path::new(&path);
+    if !source.exists() {
+        return Err(format!("文件不存在: {}", source.display()));
+    }
+    if !source.is_file() {
+        return Err(format!("仅支持删除文件: {}", source.display()));
+    }
+
+    trash::delete(source).map_err(|error| format!("移入回收站失败: {error}"))?;
+    println!("[fs][trash] moved to trash path={}", source.display());
+    Ok(())
+}
+
+/// 清空直览条目的缩略图缓存，返回是否真的删掉了文件。
+///
+/// 只清浏览缩略图（派生数据）：导入副本与预览副本是素材会话在用的独立缓存，不动。
+/// 删除后由前端同步移除条目状态，下次进入视口即按当前生成逻辑重新生成。
+#[tauri::command]
+pub async fn clear_browse_thumbnail(path: String, cache_dir: String) -> Result<bool, String> {
+    let source = Path::new(&path);
+    if !source.exists() {
+        return Err(format!("文件不存在: {}", source.display()));
+    }
+
+    let root = Path::new(&cache_dir);
+    ensure_cache_layout(root)?;
+
+    let key = browse_cache_key(source)?;
+    let thumbnail_path = root.join(THUMBNAIL_DIR_NAME).join(format!("{key}.jpg"));
+    let removed = if thumbnail_path.exists() {
+        fs::remove_file(&thumbnail_path).map_err(|error| format!("删除缩略图缓存失败: {error}"))?;
+        true
+    } else {
+        false
+    };
+
+    println!(
+        "[fs][cache] clear browse thumbnail path={} removed={}",
+        path, removed
+    );
+    Ok(removed)
 }
 
 /// 列出目录的直接子目录：不递归，跳过隐藏目录，按名称排序。供文件夹树按需展开。
@@ -1080,6 +1129,8 @@ fn create_thumbnail_asset(
 
         #[cfg(target_os = "windows")]
         if let Ok(thumbnail) = try_create_thumbnail_with_wic(source_path) {
+            // WIC 解码不带 EXIF 方向：写盘前按源文件方向转正（方形输出宽高互换后仍相等）
+            let thumbnail = bake_thumbnail_orientation(thumbnail, source_path)?;
             let write_started_at = Instant::now();
             let result = write_thumbnail_jpeg(&thumbnail, thumbnail_path);
             println!(
@@ -1125,6 +1176,101 @@ fn write_thumbnail_jpeg(thumbnail: &image::RgbImage, thumbnail_path: &Path) -> R
         .map_err(|e| format!("写入 JPEG 缩略图失败: {e}"))
 }
 
+/**
+ * 读取图片的 EXIF Orientation（1~8）。
+ *
+ * 缺失、不可读或取值非法时返回 1（正向，无需旋转）。
+ */
+fn read_exif_orientation(path: &Path) -> u8 {
+    let Ok(file) = File::open(path) else {
+        return 1;
+    };
+    let Ok(exif) = exif::Reader::new().read_from_container(&mut BufReader::new(file)) else {
+        return 1;
+    };
+
+    for field in exif.fields() {
+        if field.tag == exif::Tag::Orientation {
+            if let exif::Value::Short(values) = &field.value {
+                if let Some(&orientation) = values.first() {
+                    if (1..=8).contains(&orientation) {
+                        return orientation as u8;
+                    }
+                }
+            }
+            return 1;
+        }
+    }
+    1
+}
+
+/**
+ * 按 EXIF Orientation（1~8）把解码出的像素转成显示方向，返回（像素、新宽、新高）。
+ *
+ * 相机竖拍常存「横向像素 + 方向标签」（如 `_DSC*.jpg` 的 Orientation=8）；解码器不读标签，
+ * 直接缩放会把竖图洗成横图。必须在缩放前转正——目标框的宽高比也来自显示方向。
+ * 无需旋转时原样返回，不产生拷贝。
+ */
+fn apply_exif_orientation(
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    orientation: u8,
+) -> (Vec<u8>, u32, u32) {
+    if !(2..=8).contains(&orientation) {
+        return (pixels, width, height);
+    }
+
+    let src_w = width as usize;
+    let src_h = height as usize;
+    // 5~8 的显示方向宽高互换
+    let swap = matches!(orientation, 5..=8);
+    let dst_w = if swap { src_h } else { src_w };
+    let dst_h = if swap { src_w } else { src_h };
+    let mut out = vec![0u8; dst_w * dst_h * 3];
+
+    for dy in 0..dst_h {
+        for dx in 0..dst_w {
+            // 显示坐标 (dx, dy) 对应的源像素坐标；各方向按 EXIF 规范一一映射
+            let (sx, sy) = match orientation {
+                2 => (src_w - 1 - dx, dy),
+                3 => (src_w - 1 - dx, src_h - 1 - dy),
+                4 => (dx, src_h - 1 - dy),
+                5 => (dy, dx),
+                6 => (dy, src_h - 1 - dx),
+                7 => (src_w - 1 - dy, src_h - 1 - dx),
+                8 => (src_w - 1 - dy, dx),
+                _ => (dx, dy),
+            };
+            let src_index = (sy * src_w + sx) * 3;
+            let dst_index = (dy * dst_w + dx) * 3;
+            out[dst_index..dst_index + 3].copy_from_slice(&pixels[src_index..src_index + 3]);
+        }
+    }
+
+    (out, dst_w as u32, dst_h as u32)
+}
+
+/// 按源文件的 EXIF 方向把缩略图缓冲区转正，返回新的缓冲区。
+///
+/// Windows WIC 通道的调用方；故意不加 cfg——让这段缓冲区处理在 mac 上也参与编译检查，
+/// 避免 Windows 侧的类型/签名回归长期无人发现。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn bake_thumbnail_orientation(
+    thumbnail: image::RgbImage,
+    source_path: &Path,
+) -> Result<image::RgbImage, String> {
+    let (width, height) = (thumbnail.width(), thumbnail.height());
+    let (pixels, width, height) = apply_exif_orientation(
+        thumbnail.into_raw(),
+        width,
+        height,
+        read_exif_orientation(source_path),
+    );
+    image::RgbImage::from_raw(width, height, pixels)
+        .ok_or_else(|| "重建缩略图缓冲区失败".to_string())
+}
+
 fn create_thumbnail_from_jpeg(
     source_path: &Path,
     fit: ThumbFit,
@@ -1139,7 +1285,14 @@ fn create_thumbnail_from_jpeg(
         .dimensions()
         .ok_or_else(|| "JPEG 缩略图尺寸解析失败".to_string())?;
 
-    resize_rgb8_thumbnail(width as u32, height as u32, decoded, fit)
+    // 缩放前按 EXIF 方向转正：竖图的像素与目标框比例才都来自显示方向
+    let (pixels, width, height) = apply_exif_orientation(
+        decoded,
+        width as u32,
+        height as u32,
+        read_exif_orientation(source_path),
+    );
+    resize_rgb8_thumbnail(width, height, pixels, fit)
 }
 
 fn create_thumbnail_from_dynamic_image(
@@ -1155,7 +1308,15 @@ fn create_thumbnail_from_dynamic_image(
     let rgb = image.to_rgb8();
     let (width, height) = rgb.dimensions();
 
-    resize_rgb8_thumbnail(width, height, rgb.into_raw(), fit)
+    // 同 JPEG 路径：缩放前按 EXIF 方向转正（PNG/WebP 多为正向，函数对 1 号方向零开销）
+    let (pixels, width, height) = apply_exif_orientation(
+        rgb.into_raw(),
+        width,
+        height,
+        read_exif_orientation(source_path),
+    );
+
+    resize_rgb8_thumbnail(width, height, pixels, fit)
 }
 
 fn resize_rgb8_thumbnail(
@@ -1831,13 +1992,20 @@ fn build_cover_crop_rect(
     }
 }
 
-#[cfg(target_os = "windows")]
+///（Windows WIC 通道）把缩略图补成方形画布；同样不加 cfg，让 `resize_rgb8_thumbnail`
+/// 的调用签名在 mac 上也能被检查到（此前 Windows 侧曾因签名变更编译回归无人发现）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn ensure_thumbnail_canvas(image: &image::RgbImage) -> Result<image::RgbImage, String> {
     if image.width() == THUMBNAIL_SIZE && image.height() == THUMBNAIL_SIZE {
         return Ok(image.clone());
     }
 
-    let resized = resize_rgb8_thumbnail(image.width(), image.height(), image.clone().into_raw())?;
+    let resized = resize_rgb8_thumbnail(
+        image.width(),
+        image.height(),
+        image.clone().into_raw(),
+        ThumbFit::Cover,
+    )?;
     Ok(resized)
 }
 
@@ -1845,4 +2013,99 @@ struct CachePaths {
     image_path: PathBuf,
     preview_path: PathBuf,
     thumbnail_path: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_exif_orientation;
+
+    fn at(pixels: &[u8], index: usize) -> u8 {
+        pixels[index * 3]
+    }
+
+    #[test]
+    fn orientation_1_returns_input_untouched() {
+        let pixels = vec![10, 10, 10, 20, 20, 20];
+        let (out, width, height) = apply_exif_orientation(pixels.clone(), 2, 1, 1);
+        assert_eq!(out, pixels);
+        assert_eq!((width, height), (2, 1));
+    }
+
+    #[test]
+    fn orientation_6_rotates_90_cw() {
+        // 横排 [A B] 顺时针 90° → 竖排 A 在上、B 在下，宽高互换
+        let (out, width, height) = apply_exif_orientation(vec![10, 10, 10, 20, 20, 20], 2, 1, 6);
+        assert_eq!((width, height), (1, 2));
+        assert_eq!(at(&out, 0), 10);
+        assert_eq!(at(&out, 1), 20);
+    }
+
+    #[test]
+    fn orientation_8_rotates_90_ccw() {
+        // 逆时针 90°（_DSC4747 的实际方向）→ B 在上、A 在下
+        let (out, width, height) = apply_exif_orientation(vec![10, 10, 10, 20, 20, 20], 2, 1, 8);
+        assert_eq!((width, height), (1, 2));
+        assert_eq!(at(&out, 0), 20);
+        assert_eq!(at(&out, 1), 10);
+    }
+
+    #[test]
+    fn orientation_3_rotates_180() {
+        let (out, width, height) = apply_exif_orientation(vec![10, 10, 10, 20, 20, 20], 2, 1, 3);
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(at(&out, 0), 20);
+        assert_eq!(at(&out, 1), 10);
+    }
+
+    #[test]
+    fn orientation_2_flips_horizontally() {
+        let (out, width, height) = apply_exif_orientation(vec![10, 10, 10, 20, 20, 20], 2, 1, 2);
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(at(&out, 0), 20);
+        assert_eq!(at(&out, 1), 10);
+    }
+
+    #[test]
+    fn orientation_4_flips_vertically() {
+        // 2×2 [[1,2],[3,4]] 上下翻转 → [[3,4],[1,2]]
+        let (out, width, height) =
+            apply_exif_orientation(vec![1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4], 2, 2, 4);
+        assert_eq!((width, height), (2, 2));
+        assert_eq!(
+            [at(&out, 0), at(&out, 1), at(&out, 2), at(&out, 3)],
+            [3, 4, 1, 2]
+        );
+    }
+
+    #[test]
+    fn orientation_5_transposes() {
+        // 2×2 [[1,2],[3,4]] 主对角线转置 → [[1,3],[2,4]]
+        let (out, width, height) =
+            apply_exif_orientation(vec![1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4], 2, 2, 5);
+        assert_eq!((width, height), (2, 2));
+        assert_eq!(
+            [at(&out, 0), at(&out, 1), at(&out, 2), at(&out, 3)],
+            [1, 3, 2, 4]
+        );
+    }
+
+    #[test]
+    fn orientation_7_reflects_anti_diagonal() {
+        // 2×2 [[1,2],[3,4]] 沿反对角线反射 → [[4,2],[3,1]]
+        let (out, width, height) =
+            apply_exif_orientation(vec![1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4], 2, 2, 7);
+        assert_eq!((width, height), (2, 2));
+        assert_eq!(
+            [at(&out, 0), at(&out, 1), at(&out, 2), at(&out, 3)],
+            [4, 2, 3, 1]
+        );
+    }
+
+    #[test]
+    fn orientation_9_or_other_returns_input_untouched() {
+        let pixels = vec![9, 9, 9];
+        let (out, width, height) = apply_exif_orientation(pixels.clone(), 1, 1, 9);
+        assert_eq!(out, pixels);
+        assert_eq!((width, height), (1, 1));
+    }
 }

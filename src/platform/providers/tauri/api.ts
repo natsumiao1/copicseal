@@ -90,6 +90,14 @@ export function ensureBrowseThumbnail(
 ): Promise<BrowseThumbnailMeta> {
   return invoke('ensure_browse_thumbnail', { path, cacheDir });
 }
+/** 清空直览条目的缩略图缓存，返回是否真的删掉了文件。 */
+export function clearBrowseThumbnail(path: string, cacheDir: string): Promise<boolean> {
+  return invoke('clear_browse_thumbnail', { path, cacheDir });
+}
+/** 把文件移入系统回收站（Windows 回收站 / macOS 废纸篓），不做永久删除。 */
+export function moveToTrash(path: string): Promise<void> {
+  return invoke('move_to_trash', { path });
+}
 export function listSystemFonts(): Promise<FontInfo[]> {
   return invoke('list_system_fonts');
 }

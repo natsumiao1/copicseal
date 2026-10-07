@@ -56,6 +56,7 @@ pnpm exec shadcn add <component> --diff <file>   # 升级前看逐行差异
 | 2026-10-02 | `radio-group.tsx` | `RadioGroupItem` 新增 `group-has-[:focus-visible]/field-label:ring-0`、`group-has-[:focus-visible]/field-label:not-data-checked:border-input`、`group-has-[:focus-visible]/field-label:data-checked:border-primary` | 已同步（同上） |
 | 2026-10-02 | `accordion.tsx`、`avatar.tsx`、`dropdown-menu.tsx` | 组件本身与上游一致，但全仓库无引用 | 已删除，减少后续升级的核对量 |
 | 2026-10-04 | `dropdown-menu.tsx`（重新安装） | 重新安装以承载顶栏「视图」菜单（`CoTopNav` 勾选四块停靠面板显隐） | 按安装收尾执行 `cn` 导入替换与 `pnpm check`，组件源码与上游一致 |
+| 2026-10-06 | `context-menu.tsx`、`alert-dialog.tsx` | 新增组件：内容面板右键删除菜单与「移到回收站」确认弹窗 | 按安装收尾执行 `cn` 导入替换与 `pnpm check`（`cn` 依赖已从 `package.json` 移除），组件源码与上游一致 |
 | 2026-10-02 | `tabs.tsx` | 上游新增 `'use client'` | 不同步，按本目录约定本项目不加 RSC 指令 |
 | 2026-10-02 | `dialog.tsx`、`input.tsx`、`resizable.tsx`、`select.tsx` | 与上游一致 | 无需处理 |
 | 2026-10-03 | `slider.tsx` | 之前把 Thumb 的 key 从 `key={index}` 改成了 `key={`thumb-${值}-${个数}`}` | **已回退**：thumb 的身份只跟顺序有关，而值会在拖动时不断变化，用值做 key 等于每次改动都换掉 DOM 节点，滑块按住一拖就断，只能动一次。现在与上游一致地用下标（配一句 `biome-ignore` 说明），并留了注释防止再被改回去 |
