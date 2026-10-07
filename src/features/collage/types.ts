@@ -7,10 +7,12 @@ export type AdaptiveInsertDirection = 'left' | 'right' | 'top' | 'bottom';
 /**
  * 自适应布局树：叶子 = 一张照片；split = 把父矩形按方向二分。
  * `dir: 'v'` 左右分两列（children[0] 在左），`'h'` 上下分两行（children[0] 在上）。
+ * `ratio` = 手动分割比例（children[0] 占分割轴的比例）；缺省则按两侧照片宽高比自动推导，
+ * 存量数据无此字段，行为与从前一致。
  */
 export type AdaptiveNode =
   | { type: 'leaf'; photoId: string }
-  | { type: 'split'; dir: 'h' | 'v'; children: [AdaptiveNode, AdaptiveNode] };
+  | { type: 'split'; dir: 'h' | 'v'; children: [AdaptiveNode, AdaptiveNode]; ratio?: number };
 
 /** 自适应布局中一张照片的画布矩形（相对坐标，0..1）。 */
 export interface AdaptiveRect {
@@ -19,6 +21,19 @@ export interface AdaptiveRect {
   y: number;
   width: number;
   height: number;
+}
+
+/** 自适应布局中一个分割节点的矩形与接缝位置：把手按它叠在分割线上拖调比例。 */
+export interface AdaptiveSplitRect {
+  /** 从根出发的子索引序列，定位该 split 节点（根节点为空数组） */
+  path: number[];
+  dir: 'h' | 'v';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** children[0] 在分割轴上的有效占比（含手动覆盖），接缝位置 = 起点 + 边长 × share */
+  share: number;
 }
 
 export type CollageAnnotationType = 'text' | 'arrow' | 'rect' | 'circle';

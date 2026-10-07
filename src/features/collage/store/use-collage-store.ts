@@ -8,6 +8,7 @@ import {
   insertAdaptiveRoot,
   removeAdaptivePhoto,
   replaceAdaptivePhoto,
+  setAdaptiveSplitRatio,
 } from '../adaptive';
 import { COLLAGE_LAYOUTS } from '../layouts';
 import { createAnnotation, createEmptySlotState, getDefaultCanvasState } from '../lib';
@@ -123,6 +124,12 @@ interface CollageStoreState {
   ) => void;
   /** 自适应布局：中心区拖放，替换目标照片（树形不变） */
   replaceAdaptivePhoto: (targetPhotoId: string, newPhotoId: string) => void;
+  /**
+   * 自适应布局：写入分割线的手动比例（children[0] 占分割轴的份额）。
+   * `ratio` 为 null = 移除手动值、恢复按照片比例自动推导（双击把手）。
+   * 拖动手势配合 beginTransient / endTransient 合并为一步历史。
+   */
+  setAdaptiveSplitRatio: (path: number[], ratio: number | null) => void;
   /** 自适应布局：移除照片，父节点自动塌缩 */
   removeAdaptivePhoto: (photoId: string) => void;
   /** 自适应布局：一键清空画布上的全部照片（只清画布，不删除任何文件） */
@@ -375,6 +382,11 @@ export const useCollageStore = create<CollageStoreState>()(
       replaceAdaptivePhoto: (targetPhotoId, newPhotoId) => {
         get().commit((draft) => {
           draft.adaptiveTree = replaceAdaptivePhoto(draft.adaptiveTree, targetPhotoId, newPhotoId);
+        });
+      },
+      setAdaptiveSplitRatio: (path, ratio) => {
+        get().commit((draft) => {
+          draft.adaptiveTree = setAdaptiveSplitRatio(draft.adaptiveTree, path, ratio);
         });
       },
       removeAdaptivePhoto: (photoId) => {

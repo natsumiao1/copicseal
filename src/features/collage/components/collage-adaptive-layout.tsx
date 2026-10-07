@@ -1,7 +1,7 @@
 import { ImagePlus, X } from 'lucide-react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  computeAdaptiveRects,
+  computeAdaptiveGeometry,
   FALLBACK_PHOTO_RATIO,
   isAdaptiveEdgeFlush,
   photoRatio,
@@ -92,6 +92,8 @@ interface CollageAdaptiveLayoutProps {
  * 拖放交互：照片上的落点细分或替换这张照片（即使它的边贴合画布外沿，
  * 如上1下1 的下排占满整宽，拖到左侧即劈成上1下2）；
  * 边距外框落点沿最近外沿整体插入一整行/一列；空画布直接落第一张。
+ * 分割线把手：每个 split 节点的接缝上可拖调手动比例（双击恢复自动），
+ * 手势配合 transient 合并为一步撤销。
  */
 export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdaptiveLayoutProps) {
   const tree = useCollageStore((state) => state.present.adaptiveTree);
@@ -99,11 +101,18 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
   const insertAdaptivePhoto = useCollageStore((state) => state.insertAdaptivePhoto);
   const replaceAdaptivePhoto = useCollageStore((state) => state.replaceAdaptivePhoto);
   const removeAdaptivePhoto = useCollageStore((state) => state.removeAdaptivePhoto);
+  const setSplitRatio = useCollageStore((state) => state.setAdaptiveSplitRatio);
+  const beginTransient = useCollageStore((state) => state.beginTransient);
+  const endTransient = useCollageStore((state) => state.endTransient);
   const { ensureByPath } = usePhotoImportByPath();
   const { photos } = usePhotos();
   const photosRef = useRef(photos);
   photosRef.current = photos;
   const [dropTarget, setDropTarget] = useState<AdaptiveDropTarget | null>(null);
+  /** 分割线拖动是否进行中（pointer capture 保证事件回流到发起的把手） */
+  const splitDragRef = useRef(false);
+  /** 内容区基准框：把手拖动时把指针坐标换算成 0..1 占比 */
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
   const resolveRatio = useCallback(
     (photoId: string) => {
@@ -113,7 +122,9 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
     [photoById],
   );
 
-  const rects = useMemo(() => computeAdaptiveRects(tree, resolveRatio), [resolveRatio, tree]);
+  const geometry = useMemo(() => computeAdaptiveGeometry(tree, resolveRatio), [resolveRatio, tree]);
+  const rects = geometry.leaves;
+  const splitRects = geometry.splits;
 
   /**
    * 落图：照片不在会话里先懒导入；导入失败（文件已失效）则不入树，
@@ -205,7 +216,7 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
         }
       }}
     >
-      <div className="relative h-full w-full">
+      <div ref={contentRef} className="relative h-full w-full">
         {rects.length === 0 ? (
           <div className="pointer-events-none flex h-full w-full flex-col items-center justify-center gap-2 text-muted-foreground">
             <ImagePlus className="size-8" />
@@ -317,6 +328,73 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
                 ) : null}
               </div>
             </div>
+          );
+        })}
+
+        {/* 分割线把手：叠在每个 split 的接缝上，拖动写手动比例，双击恢复自动 */}
+        {splitRects.map((split) => {
+          const vertical = split.dir === 'v';
+          return (
+            // biome-ignore lint/a11y/noStaticElementInteractions: 指针拖拽把手：按下起手势、移动写比例、松手收尾
+            <div
+              key={`split-${split.path.join('-')}`}
+              title="拖动调整分割比例，双击恢复自动"
+              className="absolute z-10 bg-transparent transition-colors hover:bg-primary/30"
+              style={
+                vertical
+                  ? {
+                      left: `${(split.x + split.width * split.share) * 100}%`,
+                      top: `${split.y * 100}%`,
+                      height: `${split.height * 100}%`,
+                      width: '8px',
+                      marginLeft: '-4px',
+                      cursor: 'col-resize',
+                    }
+                  : {
+                      top: `${(split.y + split.height * split.share) * 100}%`,
+                      left: `${split.x * 100}%`,
+                      width: `${split.width * 100}%`,
+                      height: '8px',
+                      marginTop: '-4px',
+                      cursor: 'row-resize',
+                    }
+              }
+              onPointerDown={(event) => {
+                if (event.button !== 0) {
+                  return;
+                }
+                // 阻止默认行为避免选中文字/图片拖拽，并把后续指针事件锁到把手上
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                splitDragRef.current = true;
+                beginTransient();
+              }}
+              onPointerMove={(event) => {
+                if (!splitDragRef.current || !contentRef.current) {
+                  return;
+                }
+                const bounds = contentRef.current.getBoundingClientRect();
+                const fraction = vertical
+                  ? (event.clientX - bounds.left) / Math.max(bounds.width, 1)
+                  : (event.clientY - bounds.top) / Math.max(bounds.height, 1);
+                setSplitRatio(split.path, fraction);
+              }}
+              onPointerUp={() => {
+                if (!splitDragRef.current) {
+                  return;
+                }
+                splitDragRef.current = false;
+                endTransient();
+              }}
+              onPointerCancel={() => {
+                if (!splitDragRef.current) {
+                  return;
+                }
+                splitDragRef.current = false;
+                endTransient();
+              }}
+              onDoubleClick={() => setSplitRatio(split.path, null)}
+            />
           );
         })}
 

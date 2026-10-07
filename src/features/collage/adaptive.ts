@@ -1,4 +1,9 @@
-import type { AdaptiveInsertDirection, AdaptiveNode, AdaptiveRect } from './types';
+import type {
+  AdaptiveInsertDirection,
+  AdaptiveNode,
+  AdaptiveRect,
+  AdaptiveSplitRect,
+} from './types';
 
 /** 宽高未知时的兜底比例（3:2），仅在导入元数据解析失败时使用。 */
 export const FALLBACK_PHOTO_RATIO = 3 / 2;
@@ -246,43 +251,121 @@ export function getAdaptiveRootRatio(
   return Number.isFinite(ratio) && ratio > 0 ? ratio : FALLBACK_PHOTO_RATIO;
 }
 
+/** 手动分割比例的取值范围：读写都钳在这里，避免接缝被拖成零宽/零高。 */
+const MIN_SPLIT_RATIO = 0.05;
+const MAX_SPLIT_RATIO = 0.95;
+
 /**
- * 递归计算每张照片的相对矩形（0..1）。
- *
- * 左右分：两子树等高，宽度按比例分配；上下分：两子树等宽，高度按 1/比例 分配。
- * 因此每个 leaf 的矩形比例 == 该照片的自然比例，拼合无缝、零留白。
+ * 一个分割节点的占比（children[0] 在分割轴上的份额）：
+ * 手动值优先（读取时钳到安全范围），否则按照片宽高比推导——与旧行为完全一致。
  */
-export function computeAdaptiveRects(
-  tree: AdaptiveNode | null,
+function effectiveShare(
+  node: Extract<AdaptiveNode, { type: 'split' }>,
   resolve: AdaptiveRatioResolver,
-): AdaptiveRect[] {
+): number {
+  if (node.ratio !== undefined) {
+    return Math.min(Math.max(node.ratio, MIN_SPLIT_RATIO), MAX_SPLIT_RATIO);
+  }
+  const first = nodeRatio(node.children[0], resolve);
+  const second = nodeRatio(node.children[1], resolve);
+  if (node.dir === 'v') {
+    return first / (first + second);
+  }
+  const firstInverse = 1 / first;
+  const secondInverse = 1 / second;
+  return firstInverse / (firstInverse + secondInverse);
+}
+
+/**
+ * 按路径写入手动分割比例：`path` 为从根出发的子索引序列，定位到 split 节点；
+ * `ratio` 为 null 时移除手动值（恢复按照片比例自动推导）。路径无效时原树不动。
+ */
+export function setAdaptiveSplitRatio(
+  tree: AdaptiveNode | null,
+  path: readonly number[],
+  ratio: number | null,
+): AdaptiveNode | null {
   if (!tree) {
-    return [];
+    return null;
   }
 
-  const rects: AdaptiveRect[] = [];
-  const walk = (node: AdaptiveNode, x: number, y: number, width: number, height: number): void => {
+  const walk = (node: AdaptiveNode, depth: number): AdaptiveNode => {
     if (node.type === 'leaf') {
-      rects.push({ photoId: node.photoId, x, y, width, height });
-      return;
+      return node;
     }
-
-    const first = nodeRatio(node.children[0], resolve);
-    const second = nodeRatio(node.children[1], resolve);
-    if (node.dir === 'v') {
-      const share = first / (first + second);
-      walk(node.children[0], x, y, width * share, height);
-      walk(node.children[1], x + width * share, y, width * (1 - share), height);
-      return;
+    if (depth === path.length) {
+      if (ratio === null) {
+        // 恢复自动：重建节点丢掉 ratio 字段（原地 delete 会破坏不可变约定）
+        return node.ratio === undefined
+          ? node
+          : { type: 'split', dir: node.dir, children: node.children };
+      }
+      const next = Math.min(Math.max(ratio, MIN_SPLIT_RATIO), MAX_SPLIT_RATIO);
+      return node.ratio === next ? node : { ...node, ratio: next };
     }
-
-    const firstShare = 1 / first;
-    const secondShare = 1 / second;
-    const share = firstShare / (firstShare + secondShare);
-    walk(node.children[0], x, y, width, height * share);
-    walk(node.children[1], x, y + height * share, width, height * (1 - share));
+    const index = path[depth];
+    if (index !== 0 && index !== 1) {
+      return node;
+    }
+    const child = walk(node.children[index], depth + 1);
+    if (child === node.children[index]) {
+      return node;
+    }
+    const children: [AdaptiveNode, AdaptiveNode] = [...node.children];
+    children[index] = child;
+    return { ...node, children };
   };
 
-  walk(tree, 0, 0, 1, 1);
-  return rects;
+  return walk(tree, 0);
+}
+
+/** 自适应布局的完整几何：叶子矩形（渲染照片）+ 分割节点矩形（渲染拖调把手）。 */
+export interface AdaptiveGeometry {
+  leaves: AdaptiveRect[];
+  splits: AdaptiveSplitRect[];
+}
+
+/**
+ * 递归计算每个叶子的相对矩形（0..1）与每个分割节点的矩形/接缝占比。
+ *
+ * 左右分：两子树等高，宽度按占比分配；上下分：两子树等宽，高度按占比分配。
+ * 占比取 `effectiveShare`：无手动值时自动推导，此时每个 leaf 的矩形比例 == 该照片的
+ * 自然比例，拼合无缝、零留白；拖过分割线后按手动值分配，格子比例偏离照片比例。
+ */
+export function computeAdaptiveGeometry(
+  tree: AdaptiveNode | null,
+  resolve: AdaptiveRatioResolver,
+): AdaptiveGeometry {
+  if (!tree) {
+    return { leaves: [], splits: [] };
+  }
+
+  const leaves: AdaptiveRect[] = [];
+  const splits: AdaptiveSplitRect[] = [];
+  const walk = (
+    node: AdaptiveNode,
+    path: number[],
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): void => {
+    if (node.type === 'leaf') {
+      leaves.push({ photoId: node.photoId, x, y, width, height });
+      return;
+    }
+
+    const share = effectiveShare(node, resolve);
+    splits.push({ path, dir: node.dir, x, y, width, height, share });
+    if (node.dir === 'v') {
+      walk(node.children[0], [...path, 0], x, y, width * share, height);
+      walk(node.children[1], [...path, 1], x + width * share, y, width * (1 - share), height);
+      return;
+    }
+    walk(node.children[0], [...path, 0], x, y, width, height * share);
+    walk(node.children[1], [...path, 1], x, y + height * share, width, height * (1 - share));
+  };
+
+  walk(tree, [], 0, 0, 1, 1);
+  return { leaves, splits };
 }
