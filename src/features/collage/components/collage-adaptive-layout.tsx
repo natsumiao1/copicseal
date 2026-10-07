@@ -17,12 +17,12 @@ type DropZone = AdaptiveInsertDirection | 'replace';
 
 interface AdaptiveDropTarget {
   /**
-   * 目标照片 id；null = 画布外沿（边距外框区域）拖放，
+   * 目标照片 id；null = 边距外框（照片与画布边距之间的环带）拖放，
    * 此时沿该侧整体插入一整行/一列（根节点分割）。
    */
   photoId: string | null;
   zone: DropZone;
-  /** true = 根级插入，高亮画布内容区该侧的一半（预览整体行列） */
+  /** true = 根级插入（只在 photoId 为 null 的外框落点出现），高亮画布内容区该侧的一半 */
   root: boolean;
 }
 
@@ -89,8 +89,9 @@ interface CollageAdaptiveLayoutProps {
  *
  * 格子比例 == 照片自然比例（`object-cover` 因此无变形无裁切）；
  * `gap/2` 内缩形成格间距，画布边距由外层按画布比例分配后传入（内容框恒等比）。
- * 拖放交互：贴边高亮插入方位，中央高亮替换；空画布直接落第一张。
- * 贴合画布外沿的边与边距外框区域 → 根级插入（整体加一行/一列）。
+ * 拖放交互：照片上的落点细分或替换这张照片（即使它的边贴合画布外沿，
+ * 如上1下1 的下排占满整宽，拖到左侧即劈成上1下2）；
+ * 边距外框落点沿最近外沿整体插入一整行/一列；空画布直接落第一张。
  */
 export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdaptiveLayoutProps) {
   const tree = useCollageStore((state) => state.present.adaptiveTree);
@@ -126,7 +127,7 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
           return;
         }
         if (!targetPhotoId) {
-          // null 目标 = 外沿/空画布：沿该侧整体插入一整行/一列（空树即第一张）
+          // null 目标 = 边距外框/空画布：沿该侧整体插入一整行/一列（空树即第一张）
           insertAdaptivePhoto(null, zone === 'replace' ? 'left' : zone, draggedPhotoId);
           return;
         }
@@ -242,12 +243,13 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
                   event,
                   event.currentTarget.getBoundingClientRect(),
                 );
-                // 贴合画布外沿的边 → 根级插入（整体一行/一列），预览高亮画布内容区
-                const nextRoot = nextZone !== 'replace' && isAdaptiveEdgeFlush(rect, nextZone);
+                // 照片上的落点永远细分/替换这张照片，不因贴外沿而升级成根级插入：
+                // 占满整宽/整高的照片（如上1下1 的下排）其外侧边必然贴画布外沿，
+                // 若升级就永远无法横向劈开它；整行/整列插入只走边距外框落点。
                 setDropTarget((prev) =>
-                  prev?.photoId === rect.photoId && prev.zone === nextZone && prev.root === nextRoot
+                  prev?.photoId === rect.photoId && prev.zone === nextZone && !prev.root
                     ? prev
-                    : { photoId: rect.photoId, zone: nextZone, root: nextRoot },
+                    : { photoId: rect.photoId, zone: nextZone, root: false },
                 );
               }}
               onDragLeave={(event) => {
@@ -264,11 +266,9 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
                   event,
                   event.currentTarget.getBoundingClientRect(),
                 );
-                const nextRoot = nextZone !== 'replace' && isAdaptiveEdgeFlush(rect, nextZone);
                 setDropTarget(null);
                 if (draggedPhotoId) {
-                  // 贴外沿 = null 目标 → 根级插入整体一行/一列
-                  placePhoto(draggedPhotoId, nextRoot ? null : rect.photoId, nextZone);
+                  placePhoto(draggedPhotoId, rect.photoId, nextZone);
                 }
               }}
             >
