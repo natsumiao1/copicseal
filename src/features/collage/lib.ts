@@ -43,6 +43,7 @@ export function getDefaultCanvasState(): CollageCanvasState {
     padding: 20,
     borderRadius: 18,
     shadow: 18,
+    fillMode: 'cover',
   };
 }
 

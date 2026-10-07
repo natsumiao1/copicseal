@@ -73,6 +73,13 @@ export interface CollageCanvasState {
   padding: number;
   borderRadius: number;
   shadow: number;
+  /**
+   * 照片填充方式（画布级，全布局共用）：
+   * `cover` 裁切填满格子，`contain` 完整显示、留白透出画布背景。
+   * 旧持久化数据缺字段，读取处按 `cover` 兜底；自动比例下自适应布局两种模式渲染一致，
+   * 拖过分割线（格子偏离照片比例）后生效。
+   */
+  fillMode: 'cover' | 'contain';
 }
 
 export interface CollageTextAnnotation {

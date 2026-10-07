@@ -43,6 +43,34 @@ export function CollagePropertiesPanel() {
           </div>
 
           <div>
+            <span className="text-xs font-medium text-foreground">照片填充</span>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => updateCanvas({ fillMode: 'cover' })}
+                className={`border px-3 py-2 text-xs ${
+                  present.canvas.fillMode !== 'contain'
+                    ? 'border-primary bg-primary/5 text-foreground'
+                    : 'border-border'
+                }`}
+              >
+                裁切填满
+              </button>
+              <button
+                type="button"
+                onClick={() => updateCanvas({ fillMode: 'contain' })}
+                className={`border px-3 py-2 text-xs ${
+                  present.canvas.fillMode === 'contain'
+                    ? 'border-primary bg-primary/5 text-foreground'
+                    : 'border-border'
+                }`}
+              >
+                完整显示（留白）
+              </button>
+            </div>
+          </div>
+
+          <div>
             <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
               <span>间距</span>
               <span>{present.canvas.gap}px</span>

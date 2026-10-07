@@ -10,6 +10,7 @@ import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import type { AdaptiveInsertDirection } from '@/features/collage/types';
 import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
+import { cn } from '@/shared/lib/utils';
 import type { ImportedPhoto } from '@/shared/types/photo';
 
 /** 落点判定结果：四边插入方位，或中心区替换。 */
@@ -125,6 +126,8 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
   const geometry = useMemo(() => computeAdaptiveGeometry(tree, resolveRatio), [resolveRatio, tree]);
   const rects = geometry.leaves;
   const splitRects = geometry.splits;
+  /** contain = 完整显示、留白透出画布背景；自动比例下与 cover 渲染一致，拖过分割线后生效 */
+  const fillContain = canvas.fillMode === 'contain';
 
   /**
    * 落图：照片不在会话里先懒导入；导入失败（文件已失效）则不入树，
@@ -284,7 +287,11 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
               }}
             >
               <div
-                className="group relative h-full w-full overflow-hidden bg-muted/35 transition-colors hover:bg-muted/50"
+                className={cn(
+                  'group relative h-full w-full overflow-hidden transition-colors hover:bg-muted/50',
+                  // contain 下照片不铺满格子：底色让位给画布背景，空叶保留占位底色
+                  photo && fillContain ? 'bg-transparent' : 'bg-muted/35',
+                )}
                 style={{
                   borderRadius: canvas.borderRadius,
                   boxShadow:
@@ -297,7 +304,7 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
                   <img
                     src={photo.previewUrl}
                     alt={photo.name}
-                    className="h-full w-full object-cover"
+                    className={cn('h-full w-full', fillContain ? 'object-contain' : 'object-cover')}
                     draggable={false}
                   />
                 ) : (

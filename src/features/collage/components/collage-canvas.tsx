@@ -46,6 +46,8 @@ export function CollageCanvas({
     [present.layoutId],
   );
   const isAdaptive = present.canvas.layoutMode === 'adaptive';
+  /** 照片填充：contain = 完整显示、留白透出画布背景（自动比例下自适应两模式渲染一致，拖过分割线后生效） */
+  const fillContain = present.canvas.fillMode === 'contain';
   const photoById = useMemo(() => new Map(photos.map((photo) => [photo.id, photo])), [photos]);
   const resolvePhotoRatio = useCallback(
     (photoId: string) => {
@@ -226,7 +228,9 @@ export function CollageCanvas({
                       key={`free-${photo.id}`}
                       type="button"
                       className={cn(
-                        'group absolute aspect-[4/3] w-[30%] overflow-hidden bg-muted/35 text-left transition-colors',
+                        'group absolute aspect-[4/3] w-[30%] overflow-hidden text-left transition-colors',
+                        // contain 留白要透出画布背景：格子底色让位，仅 hover 时给出反馈
+                        fillContain ? 'bg-transparent' : 'bg-muted/35',
                         selectedSlotIndex === index
                           ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
                           : 'hover:bg-muted/50',
@@ -286,7 +290,10 @@ export function CollageCanvas({
                       <img
                         src={photo.previewUrl}
                         alt={photo.name}
-                        className="h-full w-full object-cover"
+                        className={cn(
+                          'h-full w-full',
+                          fillContain ? 'object-contain' : 'object-cover',
+                        )}
                         draggable={false}
                       />
                     </button>
@@ -316,7 +323,9 @@ export function CollageCanvas({
                       key={`${layout.id}-${slotItem.photoId ?? `empty-${gridSlot.x}-${gridSlot.y}`}`}
                       type="button"
                       className={cn(
-                        'group relative overflow-hidden bg-muted/35 text-left transition-colors',
+                        'group relative overflow-hidden text-left transition-colors',
+                        // contain 下已有照片的格子底色让位给画布背景，空槽位保留占位底色
+                        photo && fillContain ? 'bg-transparent' : 'bg-muted/35',
                         selectedSlotIndex === index
                           ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
                           : 'hover:bg-muted/50',
@@ -373,7 +382,10 @@ export function CollageCanvas({
                         <img
                           src={photo.previewUrl}
                           alt={photo.name}
-                          className="h-full w-full object-cover"
+                          className={cn(
+                            'h-full w-full',
+                            fillContain ? 'object-contain' : 'object-cover',
+                          )}
                           style={{
                             transform: `translate(${slotItem.offsetX}px, ${slotItem.offsetY}px) scale(${slotItem.scale}) rotate(${slotItem.rotation}deg)`,
                           }}
