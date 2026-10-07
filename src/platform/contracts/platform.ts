@@ -53,6 +53,10 @@ export interface FileServiceContract {
   /** 批量读取图片的 XMP 标签（星级 / 颜色标签），供筛选器过滤使用。 */
   readImageTags(paths: string[]): Promise<ImageTags[]>;
   ensureBrowseThumbnail(path: string, cacheDir: string): Promise<BrowseThumbnailMeta>;
+  /** 清空直览条目的缩略图缓存（派生数据），返回是否真的删掉了文件。 */
+  clearBrowseThumbnail(path: string, cacheDir: string): Promise<boolean>;
+  /** 把文件移入系统回收站（Windows 回收站 / macOS 废纸篓），供内容面板右键删除使用。 */
+  moveToTrash(path: string): Promise<void>;
   importImageToCache(path: string, cacheDir: string): Promise<CachedImageMeta>;
   importImageBytesToCache(
     name: string,
@@ -88,10 +92,35 @@ export interface CacheServiceContract {
   clearPreviewResourceCache(): void;
 }
 
+/** 同步给系统菜单栏「视图」菜单的一条停靠面板状态。 */
+export interface ViewMenuItemState {
+  /** 停靠面板 id。 */
+  id: string;
+  /** 菜单显示标题。 */
+  title: string;
+  /** 面板当前是否显示。 */
+  checked: boolean;
+  /** 面板是否可切换（设置页无工作台时为 false，菜单项置灰）。 */
+  enabled: boolean;
+}
+
+/** 系统菜单栏回流前端的事件。 */
+export type NativeMenuEvent =
+  | { type: 'viewToggle'; id: string; checked: boolean }
+  | { type: 'openSettings' };
+
+export interface MenuServiceContract {
+  /** 把当前路由的视图勾选状态同步给系统菜单栏「视图」菜单；无原生菜单的平台为空操作。 */
+  syncViewMenu(items: readonly ViewMenuItemState[]): Promise<void>;
+  /** 订阅系统菜单栏事件（视图勾选切换 / 打开设置），返回取消订阅函数。 */
+  onNativeMenuEvent(handler: (event: NativeMenuEvent) => void): Promise<() => void>;
+}
+
 export interface Platform {
   readonly assets: AssetServiceContract;
   readonly export: ExportServiceContract;
   readonly files: FileServiceContract;
   readonly storage: StorageServiceContract;
   readonly cache: CacheServiceContract;
+  readonly menu: MenuServiceContract;
 }

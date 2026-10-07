@@ -1,6 +1,9 @@
 import { Grid3x3, LayoutPanelLeft, LayoutTemplate, Settings2, Sparkles } from 'lucide-react';
+import { useEffect } from 'react';
 import type { AppRoute } from '@/app/routes';
+import { platform } from '@/platform';
 import { CoWindowControls } from '@/shared/components/co-window-controls';
+import type { WorkbenchPanelId } from '@/shared/layouts/business-workbench';
 import {
   setWorkbenchPanelVisible,
   WORKBENCH_PANEL_IDS,
@@ -31,13 +34,20 @@ const items: Array<{
   { route: '/collage', label: '拼图', icon: Grid3x3 },
 ];
 
+/** 系统菜单回流的 id 是字符串，落回前先校验属于已知停靠面板。 */
+function isPanelId(id: string): id is WorkbenchPanelId {
+  return (WORKBENCH_PANEL_IDS as readonly string[]).includes(id);
+}
+
 /**
  * 顶部导航条：功能选择（边框水印 / 拼图 / 设置）、视图菜单与窗口控件都收在这一行。
  *
  * 功能选择移到顶部后，左侧让给了全局文件来源（文件夹 / 内容停靠面板），
- * 因此这里不再占据固定宽度的侧栏。「视图」菜单勾选显示四个停靠面板，
- * 关闭的面板从这里恢复。整条同时是无边框窗口的拖拽区，mac 的悬浮
+ * 因此这里不再占据固定宽度的侧栏。整条同时是无边框窗口的拖拽区，mac 的悬浮
  * 红绿灯与 win 的自定义按钮分别通过左侧留白与右侧控件避开。
+ *
+ * 「视图」菜单按平台分两条路：macOS 交给系统菜单栏原生菜单（勾选状态由这里同步
+ * 过去、点击事件回流到这里），Windows 保留本组件里的下拉。`Cmd/Ctrl+,` 打开设置。
  */
 export function CoTopNav({ route, onRouteChange }: CoTopNavProps) {
   const { variant, frameMode } = useWindowStyle();
@@ -45,6 +55,71 @@ export function CoTopNav({ route, onRouteChange }: CoTopNavProps) {
   // 订阅共享布局：面板被关闭 / 恢复后勾选状态随之刷新
   const dockLayout = useWorkbenchDockStore((state) => state.layout);
   const dockApi = useWorkbenchDockStore((state) => state.apis[route]);
+  const isMac = variant === 'mac';
+
+  // mac：把当前工作台的视图勾选状态同步给系统菜单栏「视图」菜单；
+  // 停靠面板开合与路由切换都会改写 dockApi / dockLayout，这里随之重推
+  useEffect(() => {
+    if (!isMac) {
+      return;
+    }
+    void platform.menu.syncViewMenu(
+      WORKBENCH_PANEL_IDS.map((id) => ({
+        id,
+        title: WORKBENCH_PANELS[id].title,
+        checked: dockApi
+          ? dockApi.getPanel(id) !== undefined
+          : dockLayout?.panels[id] !== undefined,
+        // 设置页没有工作台时菜单项置灰，与下拉的 disabled 行为一致
+        enabled: Boolean(dockApi),
+      })),
+    );
+  }, [isMac, dockApi, dockLayout]);
+
+  // mac：系统菜单栏事件回流——勾选切换按当前路由应用，「设置…」打开设置页
+  useEffect(() => {
+    if (!isMac) {
+      return;
+    }
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void platform.menu
+      .onNativeMenuEvent((event) => {
+        if (event.type === 'viewToggle') {
+          if (isPanelId(event.id)) {
+            setWorkbenchPanelVisible(route, event.id, event.checked);
+          }
+          return;
+        }
+        onRouteChange('/settings');
+      })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
+      .catch((error: unknown) => {
+        console.error('[top-nav] 订阅系统菜单事件失败', error);
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [isMac, route, onRouteChange]);
+
+  // Cmd+,（Windows 为 Ctrl+,）打开设置：mac 的原生菜单快捷键优先命中，这里兜底其余情形
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === ',') {
+        event.preventDefault();
+        onRouteChange('/settings');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onRouteChange]);
 
   return (
     <TooltipProvider>
@@ -102,41 +177,44 @@ export function CoTopNav({ route, onRouteChange }: CoTopNavProps) {
         </nav>
 
         <div className="ml-auto flex h-full items-center gap-1" data-tauri-drag-region="false">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                disabled={!dockApi}
-                className={cn(
-                  'flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition-all',
-                  'border-transparent text-muted-foreground hover:border-border hover:bg-card hover:text-foreground',
-                  'disabled:pointer-events-none disabled:opacity-40',
-                )}
-              >
-                <LayoutPanelLeft className="size-4" />
-                视图
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-36">
-              {WORKBENCH_PANEL_IDS.map((id) => (
-                <DropdownMenuCheckboxItem
-                  key={id}
-                  checked={
-                    dockApi
-                      ? dockApi.getPanel(id) !== undefined
-                      : dockLayout?.panels[id] !== undefined
-                  }
-                  onCheckedChange={(checked) =>
-                    setWorkbenchPanelVisible(route, id, checked === true)
-                  }
-                  // 保持菜单打开，方便连续勾选多个面板
-                  onSelect={(event) => event.preventDefault()}
+          {/* mac 的「视图」在系统菜单栏，这里只留 Windows 的下拉入口 */}
+          {isMac ? null : (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  disabled={!dockApi}
+                  className={cn(
+                    'flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition-all',
+                    'border-transparent text-muted-foreground hover:border-border hover:bg-card hover:text-foreground',
+                    'disabled:pointer-events-none disabled:opacity-40',
+                  )}
                 >
-                  {WORKBENCH_PANELS[id].title}
-                </DropdownMenuCheckboxItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  <LayoutPanelLeft className="size-4" />
+                  视图
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-36">
+                {WORKBENCH_PANEL_IDS.map((id) => (
+                  <DropdownMenuCheckboxItem
+                    key={id}
+                    checked={
+                      dockApi
+                        ? dockApi.getPanel(id) !== undefined
+                        : dockLayout?.panels[id] !== undefined
+                    }
+                    onCheckedChange={(checked) =>
+                      setWorkbenchPanelVisible(route, id, checked === true)
+                    }
+                    // 保持菜单打开，方便连续勾选多个面板
+                    onSelect={(event) => event.preventDefault()}
+                  >
+                    {WORKBENCH_PANELS[id].title}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <button

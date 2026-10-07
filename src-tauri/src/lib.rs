@@ -4,6 +4,7 @@ mod db;
 mod exif;
 mod font;
 mod fs;
+mod menu;
 mod system;
 mod tags;
 mod window;
@@ -28,6 +29,9 @@ pub fn run() {
             // 先建出来，这样「打开」按钮和导出完成提示里的目录链接立刻可用
             let _ = std::fs::create_dir_all(&config.output.default_path);
             window::apply_main_window_frame_mode(app.handle(), &config.window_frame_mode)?;
+            // macOS 系统菜单栏（应用 / 编辑 / 视图 + 设置快捷键）；其他平台无菜单
+            #[cfg(target_os = "macos")]
+            menu::setup_menu(app)?;
 
             Ok(())
         })
@@ -41,6 +45,8 @@ pub fn run() {
             fs::list_root_directories,
             fs::list_folder_images,
             fs::ensure_browse_thumbnail,
+            fs::clear_browse_thumbnail,
+            fs::move_to_trash,
             fs::write_file,
             fs::convert_heic_to_jpeg,
             fs::import_image_to_cache,
@@ -61,9 +67,11 @@ pub fn run() {
             exif::read_exif,
             exif::extract_jpeg_exif,
             exif::insert_jpeg_exif,
+            exif::strip_exif_gps,
             tags::read_image_tags,
             font::list_system_fonts,
             system::get_app_info,
+            menu::sync_view_menu,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

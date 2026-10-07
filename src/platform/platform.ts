@@ -3,6 +3,7 @@ import { assetService } from './services/asset-service';
 import { cacheService } from './services/cache-service';
 import { exportService } from './services/export-service';
 import { fileService } from './services/file-service';
+import { menuService } from './services/menu-service';
 import { storageService } from './services/storage-service';
 
 /**
@@ -18,6 +19,7 @@ export function createPlatform(): Platform {
     files: fileService,
     storage: storageService,
     cache: cacheService,
+    menu: menuService,
   };
 }
 

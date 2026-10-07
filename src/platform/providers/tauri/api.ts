@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { check, type Update } from '@tauri-apps/plugin-updater';
@@ -19,8 +20,10 @@ import type {
   FontInfo,
   ImageFileMeta,
   ImageTags,
+  NativeMenuEvent,
   RootDirectory,
   UpsertComarkTemplatePayload,
+  ViewMenuItemState,
   WindowFrameMode,
 } from '@/platform/contracts';
 
@@ -269,4 +272,32 @@ export function saveImageDialog(defaultPath: string, extension: string) {
     defaultPath,
     filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
   });
+}
+
+/** 把当前路由的视图勾选状态同步给系统菜单栏「视图」菜单；无原生菜单的平台由宿主侧空操作。 */
+export function syncViewMenu(items: readonly ViewMenuItemState[]): Promise<void> {
+  return invoke('sync_view_menu', { items });
+}
+
+/**
+ * 订阅系统菜单栏事件（视图勾选切换 / 打开设置），返回取消订阅函数。
+ *
+ * 事件由 Rust 侧 `menu` 模块 emit，事件名与那边的常量保持一致。
+ */
+export async function onNativeMenuEvent(
+  handler: (event: NativeMenuEvent) => void,
+): Promise<() => void> {
+  const unlistenToggle = await listen<{ id: string; checked: boolean }>(
+    'view-menu-toggle',
+    (event) => {
+      handler({ type: 'viewToggle', id: event.payload.id, checked: event.payload.checked });
+    },
+  );
+  const unlistenSettings = await listen<void>('open-settings', () => {
+    handler({ type: 'openSettings' });
+  });
+  return () => {
+    unlistenToggle();
+    unlistenSettings();
+  };
 }
