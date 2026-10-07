@@ -42,7 +42,7 @@ export function getDefaultCanvasState(): CollageCanvasState {
     gap: 12,
     padding: 20,
     borderRadius: 18,
-    shadow: 18,
+    shadow: 0,
     fillMode: 'cover',
     adaptiveFollowContent: true,
   };
