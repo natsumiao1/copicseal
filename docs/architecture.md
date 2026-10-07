@@ -30,10 +30,10 @@ src/
 
 ### 代码结构约束
 
-- `shared/layouts` 只存放可复用布局组件，不判断当前业务页面，也不直接渲染 Template / Collage 的业务内容；通过 props 或 children 暴露 `header`、`panels`（文件夹 / 收藏夹 / 筛选器 / 内容 / 预览 / 调整六块停靠面板）等插槽
-- `shared/layouts/business-workbench` 为 dockview 停靠宿主，以 `panels` 插槽承载六块面板：每块一个 tab（标题 + ✕），可换位、四向分割、拖到中心合并为同组 tab，面板间 `4px` 细缝；默认布局里收藏夹与文件夹同组（第一栏上半两个 tab）、筛选器停靠文件夹栏下方，旧布局缺收藏夹 / 筛选器时首载各补挂一次，恢复布局时以 `WORKBENCH_PANELS` 统一刷新 tab 标题；布局持久化并跨页共享（`shared/store/use-workbench-dock-store.ts`）
+- `shared/layouts` 只存放可复用布局组件，不判断当前业务页面，也不直接渲染 Template / Collage 的业务内容；通过 props 或 children 暴露 `header`、`panels`（文件夹 / 收藏夹 / 筛选器 / 内容 / 预览 / 调整 / 导出七块停靠面板）等插槽
+- `shared/layouts/business-workbench` 为 dockview 停靠宿主，以 `panels` 插槽承载七块面板：每块一个 tab（标题 + ✕），可换位、四向分割、拖到中心合并为同组 tab，面板间 `4px` 细缝；默认布局里收藏夹与文件夹同组（第一栏上半两个 tab）、筛选器停靠文件夹栏下方、导出停靠调整面板下方，旧布局缺收藏夹 / 筛选器 / 导出时首载各补挂一次，恢复布局时以 `WORKBENCH_PANELS` 统一刷新 tab 标题；布局持久化并跨页共享（`shared/store/use-workbench-dock-store.ts`）
 - `features/template` 与 `features/collage` 提供页面入口组件，引用 `shared/layouts` 组装页面，而不是由布局层反向承载页面逻辑
-- 功能选择（拼图 / 边框水印 / 设置）与「视图」菜单位于窗口顶部横条 `CoTopNav`，由 `app.tsx` 顶层挂载
+- 功能选择（拼图 / 边框水印 / 设置）与「视图」菜单位于窗口顶部横条 `CoTopNav`，由 `app.tsx` 顶层挂载；macOS 的「视图」勾选与「设置…」`Cmd+,` 走系统菜单栏原生菜单（`src-tauri/src/menu.rs`，事件经 `platform.menu` 回流），Windows 的「视图」下拉留在 `CoTopNav`
 - 底部素材条机制已移除，Template 与 Collage 共用同一停靠布局与同一份素材会话（`PhotoProvider` 全局一份，挂于 `app.tsx`，`/settings` 页不激活）
 
 ### Feature 独立原则
@@ -65,6 +65,7 @@ export interface Platform {
   readonly files: FileServiceContract; // 文件、目录枚举、标签读取、直览缩略图与缓存
   readonly storage: StorageServiceContract; // 配置与系统字体
   readonly cache: CacheServiceContract; // 前端内存缓存
+  readonly menu: MenuServiceContract; // 系统菜单栏：视图勾选同步与菜单事件回流
 }
 ```
 
@@ -127,7 +128,7 @@ SQLite 存储轻量配置与索引：General 设置、Template / Collage / Expor
 
 ## 4. 持久化策略
 
-**持久化**：Settings 默认配置、模板收藏、模板最近使用、全局文件来源状态（当前文件夹、收藏文件夹）、筛选条件（星级 / 标签 / 长宽比 / 文件类型）与筛选器条件区折叠状态、六块面板的停靠布局、缓存索引。
+**持久化**：Settings 默认配置、模板收藏、模板最近使用、全局文件来源状态（当前文件夹、收藏文件夹）、筛选条件（星级 / 标签 / 长宽比 / 文件类型）与筛选器条件区折叠状态、七块面板的停靠布局、导出预设（键 `copicseal-export-presets`，两页共用一份）、缓存索引。
 
 **不持久化为项目**：Template 会话编辑状态、Collage 会话编辑状态、全局工作区快照。
 
@@ -174,13 +175,13 @@ SQLite 存储轻量配置与索引：General 设置、Template / Collage / Expor
 | templateId | string | 该照片使用的模板 ID |
 | templateProps | object | 该照片的模板参数，切换模板时重置为该模板的默认值 |
 | background | object | 该照片的背景设置，同样随模板切换重置 |
-| exportPresets | ExportPreset[] | 该照片的输出档位，至少一档 |
 
 约束：
 
 - 未编辑过的照片沿用框架默认配置（默认模板及其默认参数与背景），不写入任何条目；例外是纯色背景的主题色默认：选中一张纯色背景且颜色仍为默认值的照片时，会为它写入一次第一个主题色
 - 该默认色只在浏览照片时写入，导出期间不改写配置：批量导出严格按每张照片已有的配置渲染
 - 切换模板只影响当前照片；「模板与参数」「背景」分别支持一键应用到其余照片，参数与模板必须一起复制
+- 导出参数不属于照片配置：它属于全局共享的导出预设（§5.7），两页共用一份
 - 素材被移除时其配置一并回收
 - 运行态配置不做跨会话持久化（见 §4）
 
@@ -220,8 +221,9 @@ SQLite 存储轻量配置与索引：General 设置、Template / Collage / Expor
 | color | string | 纯色背景颜色 |
 | blur / brightness | number | 模糊强度（相对画框宽度比例）/ 模糊图亮度 |
 | paddingHorizontal / paddingVertical | number | 内边距，均以画框宽度为基准 |
+| frameAspect | `auto` \| 比例字符串 | 画框比例（宽:高）；`auto` 跟随照片比例，手动值形如 `3:2` |
 
-- 字段按模式条件显示：颜色仅纯色模式可见，模糊与亮度仅照片模式可见，内边距在两种有背景的模式下都可见
+- 字段按模式条件显示：颜色仅纯色模式可见，模糊与亮度仅照片模式可见，内边距与画框比例在两种有背景的模式下都可见
 - 纯色模式的颜色默认取自动提取的照片主题色（前 5 色按占比排序，会话内按图片缓存，不进配置），用户改过颜色后不再覆盖
 - `image` 模式当前使用正在编辑的照片本身；自定义背景图预留字段，暂不实现
 
@@ -268,16 +270,17 @@ SQLite 存储轻量配置与索引：General 设置、Template / Collage / Expor
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| layout | SerializedDockview \| null | 六块面板的布局（位置、尺寸、tab 归组、关闭状态；默认顶层一行四栏 + 文件夹栏下方的筛选器，收藏夹与文件夹同栏两 tab）；持久化，键 `copicseal-dock-layout`，`null` 表示首次启动待构建 |
+| layout | SerializedDockview \| null | 七块面板的布局（位置、尺寸、tab 归组、关闭状态；默认顶层一行四栏 + 文件夹栏下方的筛选器 + 调整栏下方的导出，收藏夹与文件夹同栏两 tab）；持久化，键 `copicseal-dock-layout`，`null` 表示首次启动待构建 |
 | favoritesSeeded | boolean | 收藏夹 tab 是否已并入布局；持久化，旧布局首载补挂一次后置位，之后显示与否完全以布局为准 |
 | filterSeeded | boolean | 筛选器面板是否已并入布局（同 `favoritesSeeded`，补挂到文件夹栏下方）；持久化 |
+| exportSeeded | boolean | 导出面板是否已并入布局（同 `favoritesSeeded`，补挂到调整面板下方）；持久化 |
 | apis | Partial\<Record\<AppRoute, DockviewApi\>\> | 各功能页工作台的 dockview 实例；不持久化，顶栏「视图」菜单按当前路由取用 |
 
 - 落地为 `shared/store/use-workbench-dock-store.ts`，两个功能页共享同一份布局
-- 本页布局变化防抖回写 `layout`，再经订阅同步到另一页（序列化字符串比对防回环）
-- 布局读取时做结构校验（面板 id / 组件名都在六块之内），损坏则回退默认布局
+- 布局同步只由**激活页**参与：激活页把布局变化防抖回写 `layout` 并应用共享布局的变化（序列化字符串比对防回环）；隐藏页暂停回写与应用，切走时立刻落盘未写回的改动，重新激活时统一应用一次共享布局。两页互写会形成往返回环（界面闪烁、面板尺寸被反复校正挤回去），必须以激活态闸门
+- 布局读取时做结构校验（面板 id / 组件名都在七块之内），损坏则回退默认布局
 - 恢复布局后按 `WORKBENCH_PANELS` 统一刷新 tab 标题，保证改名（预览区 → 预览、调整区 → 调整）对旧布局生效
-- 旧版本保存的布局缺收藏夹 tab / 筛选器面板时，首载分别由 `ensureFavoritesPanel` / `ensureFilterPanel` 补挂一次（`favoritesSeeded` / `filterSeeded` 置位）
+- 旧版本保存的布局缺收藏夹 tab / 筛选器面板 / 导出面板时，首载分别由 `ensureFavoritesPanel` / `ensureFilterPanel` / `ensureExportPanel` 补挂一次（`favoritesSeeded` / `filterSeeded` / `exportSeeded` 置位）
 - 旧键 `folderCollapsed` / `contentCollapsed` 弃用，不迁移
 
 ### 5.6 Collage Session
@@ -289,20 +292,28 @@ SQLite 存储轻量配置与索引：General 设置、Template / Collage / Expor
 | canvasStyle | object | 间距、边距、背景、圆角、阴影 |
 | items | object[] | 画布中的图片项 |
 | selectedItemId | string | 当前选中图片项 |
-| exportConfig | object | 导出配置 |
 
 Collage Item：`id`、`assetId`、`x`、`y`、`width`、`height`、`scale`、`rotation`、`borderRadius`。
 
+导出参数不属于拼图状态：与 Template 共用同一份全局导出预设（§5.7）。
+
 ### 5.7 Export Config
+
+导出参数收敛为**全局导出预设**（`ExportPresetProfile`），Template 与 Collage 共用一份，不属于任何页面或照片状态：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| presets | ExportPreset[] | 输出档位列表，至少一档 |
-| outputDir | string | 输出目录 |
-| preserveExif | boolean | 是否保留原图 EXIF |
-| dpi | number | 分辨率元数据，不参与尺寸计算 |
+| id / name | string | 预设 id 与显示名 |
+| destination / customPath | enum / string \| null | 存储至（设置的导出目录 / 原始文件位置 / 自定义）；自定义时的目录 |
+| subfolder | string \| null | 存储到指定名称的子文件夹；`null` 表示不建子目录 |
+| conflict | enum | `unique-name`（批内去重 + 查磁盘追加序号）/ `overwrite` |
+| format / quality | enum / number | `png` \| `jpeg`（WebP 暂不支持）；品质仅 JPEG 生效 |
+| sizing | object | 尺寸意图：缩放百分比，或调整大小至（长 / 短 / 宽 / 高边 + 像素 + 不放大） |
+| includeExif / stripGps | boolean | 保留原图 EXIF；进一步剥离 GPS 位置信息 |
 
-ExportPreset：`id`、`fileName`（缺省表示按目标尺寸自动命名）、`format`（`png` \| `jpeg`，WebP 暂不支持）、`width`、`height`、`scale`、`quality`。字段语义见 [features.md](./features.md) §3.3，尺寸解算见 §3.4。
+落地为 `shared/store/use-export-preset-store.ts`（键 `copicseal-export-presets`，持久化），首启种子「默认预设」（id `default`）；预设行同时是拖拽导出的触发目标，UI 见 [requirements.md](./requirements.md) §5.5。
+
+管线侧的导出参数（`ExportOptions`，`shared/types/export.ts`）：`presets`（由页面从预设派生的管线档位）、`dpi`（分辨率元数据，写入尚未实现）、`preserveExif`、`stripGps`；落盘目录与冲突策略经 `ExportRunContext` 传入（`outputDir` 由 `resolveProfileOutputDir` 按预设解析，`conflict` 取自预设）。字段语义见 [features.md](./features.md) §3.3，尺寸解算见 §3.4。
 
 ### 5.8 Settings Config
 
