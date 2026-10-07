@@ -80,6 +80,14 @@ export interface CollageCanvasState {
    * 拖过分割线（格子偏离照片比例）后生效。
    */
   fillMode: 'cover' | 'contain';
+  /**
+   * 自适应模式的画布比例策略：
+   * `true`（默认）跟随内容 = 画布 = 根节点自然比例、照片树整框铺满；
+   * `false` 固定为 `aspectPreset` 比例——画布套内容，照片树按自然比例整体居中，
+   * 余量透出画布背景（照片零裁切）。仅自适应模式读取；
+   * 旧持久化数据缺字段，读取处按 `true` 兜底。
+   */
+  adaptiveFollowContent: boolean;
 }
 
 export interface CollageTextAnnotation {

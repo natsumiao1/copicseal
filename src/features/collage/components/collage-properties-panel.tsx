@@ -1,8 +1,58 @@
-import { COLLAGE_RATIO_OPTIONS } from '@/features/collage/lib';
+import { useEffect, useState } from 'react';
+import {
+  COLLAGE_RATIO_OPTIONS,
+  clamp,
+  MAX_CANVAS_RATIO,
+  MIN_CANVAS_RATIO,
+} from '@/features/collage/lib';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import { CoPanelSection } from '@/shared/components/co-panel-section';
 import { Input } from '@/shared/ui/input';
 import { Slider } from '@/shared/ui/slider';
+
+interface RatioInputProps {
+  value: number;
+  onCommit: (value: number) => void;
+}
+
+/**
+ * 自由比例的单侧数字输入：输入过程只改本地文本，失焦 / 回车才提交；
+ * 提交值经父级钳制到安全比例（1:5 ~ 5:1）后回写，非法内容失焦还原。
+ */
+function RatioInput({ value, onCommit }: RatioInputProps) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
+  const commit = () => {
+    const parsed = Number(text);
+    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 999) {
+      setText(String(parsed));
+      onCommit(parsed);
+      return;
+    }
+    setText(String(value));
+  };
+
+  return (
+    <Input
+      type="number"
+      min={1}
+      max={999}
+      inputMode="decimal"
+      value={text}
+      onChange={(event) => setText(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.currentTarget.blur();
+        }
+      }}
+      className="h-7 w-16 text-right"
+    />
+  );
+}
 
 export function CollagePropertiesPanel() {
   const { present, selectedSlotIndex, updateCanvas, updateSlot } = useCollageStore();
@@ -11,6 +61,11 @@ export function CollagePropertiesPanel() {
     selectedSlotIndex !== null ? (present.slotItems[selectedSlotIndex] ?? null) : null;
 
   const isAdaptive = present.canvas.layoutMode === 'adaptive';
+  /** 自适应画布比例：默认跟随内容（画布 = 根节点比例），可切固定比例（套内容、居中留白） */
+  const adaptiveFollow = present.canvas.adaptiveFollowContent !== false;
+  /** 自定义宽:高输入仅在「自定义比例」生效时显示（自适应跟随内容期间隐藏） */
+  const showCustomRatioInputs =
+    present.canvas.aspectPreset === 'custom' && (!isAdaptive || !adaptiveFollow);
 
   return (
     <div className="divide-y divide-border/60">
@@ -18,19 +73,33 @@ export function CollagePropertiesPanel() {
         <div className="space-y-4">
           <div>
             <span className="text-xs font-medium text-foreground">画布比例</span>
-            {isAdaptive ? (
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                跟随内容：由照片按布局自动推导，无留白、无裁切。
-              </p>
-            ) : (
-              <div className="mt-2 grid grid-cols-3 gap-2">
+            <div className="mt-2 space-y-2">
+              <div className="grid grid-cols-3 gap-2">
+                {isAdaptive ? (
+                  <button
+                    type="button"
+                    onClick={() => updateCanvas({ adaptiveFollowContent: true })}
+                    className={`border px-3 py-2 text-xs ${
+                      adaptiveFollow
+                        ? 'border-primary bg-primary/5 text-foreground'
+                        : 'border-border'
+                    }`}
+                  >
+                    跟随内容
+                  </button>
+                ) : null}
                 {COLLAGE_RATIO_OPTIONS.map((item) => (
                   <button
                     key={item.label}
                     type="button"
-                    onClick={() => updateCanvas({ aspectPreset: item.label })}
+                    onClick={() =>
+                      updateCanvas({
+                        aspectPreset: item.label,
+                        ...(isAdaptive ? { adaptiveFollowContent: false } : {}),
+                      })
+                    }
                     className={`border px-3 py-2 text-xs ${
-                      present.canvas.aspectPreset === item.label
+                      (!isAdaptive || !adaptiveFollow) && present.canvas.aspectPreset === item.label
                         ? 'border-primary bg-primary/5 text-foreground'
                         : 'border-border'
                     }`}
@@ -38,8 +107,62 @@ export function CollagePropertiesPanel() {
                     {item.label}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateCanvas({
+                      aspectPreset: 'custom',
+                      ...(isAdaptive ? { adaptiveFollowContent: false } : {}),
+                    })
+                  }
+                  className={`border px-3 py-2 text-xs ${
+                    (!isAdaptive || !adaptiveFollow) && present.canvas.aspectPreset === 'custom'
+                      ? 'border-primary bg-primary/5 text-foreground'
+                      : 'border-border'
+                  }`}
+                >
+                  自定义
+                </button>
               </div>
-            )}
+              {showCustomRatioInputs ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>宽</span>
+                  <RatioInput
+                    value={present.canvas.customRatioWidth}
+                    onCommit={(value) =>
+                      updateCanvas({
+                        customRatioWidth: clamp(
+                          value,
+                          Math.max(1, present.canvas.customRatioHeight * MIN_CANVAS_RATIO),
+                          present.canvas.customRatioHeight * MAX_CANVAS_RATIO,
+                        ),
+                      })
+                    }
+                  />
+                  <span>:</span>
+                  <span>高</span>
+                  <RatioInput
+                    value={present.canvas.customRatioHeight}
+                    onCommit={(value) =>
+                      updateCanvas({
+                        customRatioHeight: clamp(
+                          value,
+                          Math.max(1, present.canvas.customRatioWidth * MIN_CANVAS_RATIO),
+                          present.canvas.customRatioWidth * MAX_CANVAS_RATIO,
+                        ),
+                      })
+                    }
+                  />
+                </div>
+              ) : null}
+              {isAdaptive ? (
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {adaptiveFollow
+                    ? '画布比例由照片按布局自动推导；拖动分割线微调占比，或拖画布边角把手接管为固定比例。'
+                    : '画布固定为所选比例，照片树按自然比例居中，余量透出画布背景，照片不裁切。'}
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <div>

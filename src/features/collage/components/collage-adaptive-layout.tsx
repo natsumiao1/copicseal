@@ -3,9 +3,11 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   computeAdaptiveGeometry,
   FALLBACK_PHOTO_RATIO,
+  getAdaptiveRootRatio,
   isAdaptiveEdgeFlush,
   photoRatio,
 } from '@/features/collage/adaptive';
+import { getAspectRatioValue } from '@/features/collage/lib';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import type { AdaptiveInsertDirection } from '@/features/collage/types';
 import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
@@ -35,6 +37,18 @@ const ZONE_OVERLAY: Record<DropZone, React.CSSProperties> = {
   bottom: { left: 0, top: '50%', width: '100%', height: '50%' },
   replace: { left: 0, top: 0, width: '100%', height: '100%' },
 };
+
+/** 套内容框的贴边方位 → Tailwind 类（保持字面量，JIT 才能扫描到） */
+const FRAME_JUSTIFY_CLASS = {
+  start: 'justify-start',
+  center: 'justify-center',
+  end: 'justify-end',
+} as const;
+const FRAME_ALIGN_CLASS = {
+  start: 'items-start',
+  center: 'items-center',
+  end: 'items-end',
+} as const;
 
 /** 从拖拽载荷里取照片 id：直览条目（路径）与画布照片两种来源。 */
 function readDraggedPhotoId(event: React.DragEvent): string {
@@ -83,6 +97,11 @@ interface CollageAdaptiveLayoutProps {
   photoById: Map<string, ImportedPhoto>;
   /** 内容区内边距：已按画布比例分配到两条轴（长边 = 滑杆值），保证内容框等比（见 docs/features.md 2.4） */
   contentPadding: string;
+  /**
+   * 套内容框的贴边方位（画布把手拖拽时由外层传入）：内容贴住画布锚定侧、画面不随拖动重排，
+   * 余量（留白）向被拖方向堆积；缺省居中。
+   */
+  contentAnchor?: { justify: 'start' | 'center' | 'end'; align: 'start' | 'center' | 'end' };
 }
 
 /**
@@ -96,7 +115,13 @@ interface CollageAdaptiveLayoutProps {
  * 分割线把手：每个 split 节点的接缝上可拖调手动比例（双击恢复自动），
  * 手势配合 transient 合并为一步撤销。
  */
-export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdaptiveLayoutProps) {
+export function CollageAdaptiveLayout({
+  photoById,
+  contentPadding,
+  contentAnchor,
+}: CollageAdaptiveLayoutProps) {
+  const frameJustify = FRAME_JUSTIFY_CLASS[contentAnchor?.justify ?? 'center'];
+  const frameAlign = FRAME_ALIGN_CLASS[contentAnchor?.align ?? 'center'];
   const tree = useCollageStore((state) => state.present.adaptiveTree);
   const canvas = useCollageStore((state) => state.present.canvas);
   const insertAdaptivePhoto = useCollageStore((state) => state.insertAdaptivePhoto);
@@ -128,6 +153,21 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
   const splitRects = geometry.splits;
   /** contain = 完整显示、留白透出画布背景；自动比例下与 cover 渲染一致，拖过分割线后生效 */
   const fillContain = canvas.fillMode === 'contain';
+  /**
+   * 画布套内容：固定比例下把照片树按自然比例 contain 进内容框并居中，
+   * 余量透出画布背景（照片零裁切）；跟随内容时自然比例 == 画布比例，整框铺满。
+   */
+  const frame = useMemo(() => {
+    if (canvas.adaptiveFollowContent !== false) {
+      return { widthPct: 100, heightPct: 100 };
+    }
+    const canvasRatio = getAspectRatioValue(canvas);
+    const naturalRatio = getAdaptiveRootRatio(tree, resolveRatio);
+    // 内容更宽 → 按宽贴合、上下留白；更高 → 按高贴合、左右留白
+    return naturalRatio >= canvasRatio
+      ? { widthPct: 100, heightPct: (canvasRatio / naturalRatio) * 100 }
+      : { widthPct: (naturalRatio / canvasRatio) * 100, heightPct: 100 };
+  }, [canvas, resolveRatio, tree]);
 
   /**
    * 落图：照片不在会话里先懒导入；导入失败（文件已失效）则不入树，
@@ -164,7 +204,7 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 拖放容器需要在容器级接收 drag/drop 事件
     <div
-      className="absolute inset-0"
+      className={cn('absolute inset-0 flex', frameJustify, frameAlign)}
       style={{ padding: contentPadding }}
       onDragOver={(event) => {
         // WKWebView/Safari 要求 dragenter 与 dragover 都被取消才放行 drop
@@ -219,199 +259,212 @@ export function CollageAdaptiveLayout({ photoById, contentPadding }: CollageAdap
         }
       }}
     >
-      <div ref={contentRef} className="relative h-full w-full">
-        {rects.length === 0 ? (
-          <div className="pointer-events-none flex h-full w-full flex-col items-center justify-center gap-2 text-muted-foreground">
-            <ImagePlus className="size-8" />
-            <span className="text-xs">从左侧拖入照片开始拼图</span>
-          </div>
-        ) : null}
+      {/* 内容框：跟随内容时铺满；固定比例时按自然比例 contain，
+          贴边方位由 contentAnchor 决定（拖把手时贴锚定侧、余量向拖拽方向堆积），缺省居中 */}
+      <div
+        className="relative"
+        style={{
+          width: `${frame.widthPct}%`,
+          height: `${frame.heightPct}%`,
+        }}
+      >
+        <div ref={contentRef} className="relative h-full w-full">
+          {rects.length === 0 ? (
+            <div className="pointer-events-none flex h-full w-full flex-col items-center justify-center gap-2 text-muted-foreground">
+              <ImagePlus className="size-8" />
+              <span className="text-xs">从左侧拖入照片开始拼图</span>
+            </div>
+          ) : null}
 
-        {rects.map((rect) => {
-          const photo = photoById.get(rect.photoId);
-          const cellZone =
-            dropTarget?.photoId === rect.photoId && !dropTarget.root ? dropTarget.zone : null;
-          // 格间距只作用于照片之间：贴画布外沿的边不内缩，
-          // 外圈留白完全由「边距」独立决定（可为 0，不随间距变化）
-          const edgeInset = (direction: AdaptiveInsertDirection) =>
-            isAdaptiveEdgeFlush(rect, direction) ? 0 : canvas.gap / 2;
+          {rects.map((rect) => {
+            const photo = photoById.get(rect.photoId);
+            const cellZone =
+              dropTarget?.photoId === rect.photoId && !dropTarget.root ? dropTarget.zone : null;
+            // 格间距只作用于照片之间：贴画布外沿的边不内缩，
+            // 外圈留白完全由「边距」独立决定（可为 0，不随间距变化）
+            const edgeInset = (direction: AdaptiveInsertDirection) =>
+              isAdaptiveEdgeFlush(rect, direction) ? 0 : canvas.gap / 2;
 
-          return (
-            // biome-ignore lint/a11y/noStaticElementInteractions: 照片格子是拖放目标，按方位判定插入位置
-            <div
-              key={rect.photoId}
-              className="absolute"
-              style={{
-                left: `${rect.x * 100}%`,
-                top: `${rect.y * 100}%`,
-                width: `${rect.width * 100}%`,
-                height: `${rect.height * 100}%`,
-                // 内部接缝两侧各缩 gap/2 合计成间距；贴外沿的边缩量为 0
-                padding: `${edgeInset('top')}px ${edgeInset('right')}px ${edgeInset('bottom')}px ${edgeInset('left')}px`,
-              }}
-              onDragOver={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                event.dataTransfer.dropEffect = 'copy';
-                const nextZone = computeDropZone(
-                  event,
-                  event.currentTarget.getBoundingClientRect(),
-                );
-                // 照片上的落点永远细分/替换这张照片，不因贴外沿而升级成根级插入：
-                // 占满整宽/整高的照片（如上1下1 的下排）其外侧边必然贴画布外沿，
-                // 若升级就永远无法横向劈开它；整行/整列插入只走边距外框落点。
-                setDropTarget((prev) =>
-                  prev?.photoId === rect.photoId && prev.zone === nextZone && !prev.root
-                    ? prev
-                    : { photoId: rect.photoId, zone: nextZone, root: false },
-                );
-              }}
-              onDragLeave={(event) => {
-                if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                  return;
-                }
-                setDropTarget((prev) => (prev?.photoId === rect.photoId ? null : prev));
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                const draggedPhotoId = readDraggedPhotoId(event);
-                const nextZone = computeDropZone(
-                  event,
-                  event.currentTarget.getBoundingClientRect(),
-                );
-                setDropTarget(null);
-                if (draggedPhotoId) {
-                  placePhoto(draggedPhotoId, rect.photoId, nextZone);
-                }
-              }}
-            >
+            return (
+              // biome-ignore lint/a11y/noStaticElementInteractions: 照片格子是拖放目标，按方位判定插入位置
               <div
-                className={cn(
-                  'group relative h-full w-full overflow-hidden transition-colors hover:bg-muted/50',
-                  // contain 下照片不铺满格子：底色让位给画布背景，空叶保留占位底色
-                  photo && fillContain ? 'bg-transparent' : 'bg-muted/35',
-                )}
+                key={rect.photoId}
+                className="absolute"
                 style={{
-                  borderRadius: canvas.borderRadius,
-                  boxShadow:
-                    canvas.shadow > 0
-                      ? `0 14px 28px -18px rgba(15, 23, 42, ${Math.min(canvas.shadow / 100, 0.35)})`
-                      : 'none',
+                  left: `${rect.x * 100}%`,
+                  top: `${rect.y * 100}%`,
+                  width: `${rect.width * 100}%`,
+                  height: `${rect.height * 100}%`,
+                  // 内部接缝两侧各缩 gap/2 合计成间距；贴外沿的边缩量为 0
+                  padding: `${edgeInset('top')}px ${edgeInset('right')}px ${edgeInset('bottom')}px ${edgeInset('left')}px`,
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = 'copy';
+                  const nextZone = computeDropZone(
+                    event,
+                    event.currentTarget.getBoundingClientRect(),
+                  );
+                  // 照片上的落点永远细分/替换这张照片，不因贴外沿而升级成根级插入：
+                  // 占满整宽/整高的照片（如上1下1 的下排）其外侧边必然贴画布外沿，
+                  // 若升级就永远无法横向劈开它；整行/整列插入只走边距外框落点。
+                  setDropTarget((prev) =>
+                    prev?.photoId === rect.photoId && prev.zone === nextZone && !prev.root
+                      ? prev
+                      : { photoId: rect.photoId, zone: nextZone, root: false },
+                  );
+                }}
+                onDragLeave={(event) => {
+                  if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    return;
+                  }
+                  setDropTarget((prev) => (prev?.photoId === rect.photoId ? null : prev));
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const draggedPhotoId = readDraggedPhotoId(event);
+                  const nextZone = computeDropZone(
+                    event,
+                    event.currentTarget.getBoundingClientRect(),
+                  );
+                  setDropTarget(null);
+                  if (draggedPhotoId) {
+                    placePhoto(draggedPhotoId, rect.photoId, nextZone);
+                  }
                 }}
               >
-                {photo ? (
-                  <img
-                    src={photo.previewUrl}
-                    alt={photo.name}
-                    className={cn('h-full w-full', fillContain ? 'object-contain' : 'object-cover')}
-                    draggable={false}
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-                    <ImagePlus className="size-5" />
-                  </div>
-                )}
-
-                {/* hover 浮现移除：只从画布去掉，不删磁盘文件 */}
-                <button
-                  type="button"
-                  aria-label="从画布移除"
-                  title="从画布移除（不删除文件）"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    removeAdaptivePhoto(rect.photoId);
+                <div
+                  className={cn(
+                    'group relative h-full w-full overflow-hidden transition-colors hover:bg-muted/50',
+                    // contain 下照片不铺满格子：底色让位给画布背景，空叶保留占位底色
+                    photo && fillContain ? 'bg-transparent' : 'bg-muted/35',
+                  )}
+                  style={{
+                    borderRadius: canvas.borderRadius,
+                    boxShadow:
+                      canvas.shadow > 0
+                        ? `0 14px 28px -18px rgba(15, 23, 42, ${Math.min(canvas.shadow / 100, 0.35)})`
+                        : 'none',
                   }}
-                  className="absolute right-1.5 top-1.5 hidden h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white transition-colors hover:bg-black/75 group-hover:flex"
                 >
-                  <X className="size-3.5" />
-                </button>
+                  {photo ? (
+                    <img
+                      src={photo.previewUrl}
+                      alt={photo.name}
+                      className={cn(
+                        'h-full w-full',
+                        fillContain ? 'object-contain' : 'object-cover',
+                      )}
+                      draggable={false}
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+                      <ImagePlus className="size-5" />
+                    </div>
+                  )}
 
-                {cellZone ? (
-                  <div
-                    className="pointer-events-none absolute bg-primary/25 ring-2 ring-inset ring-primary"
-                    style={ZONE_OVERLAY[cellZone]}
-                  />
-                ) : null}
+                  {/* hover 浮现移除：只从画布去掉，不删磁盘文件 */}
+                  <button
+                    type="button"
+                    aria-label="从画布移除"
+                    title="从画布移除（不删除文件）"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeAdaptivePhoto(rect.photoId);
+                    }}
+                    className="absolute right-1.5 top-1.5 hidden h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white transition-colors hover:bg-black/75 group-hover:flex"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+
+                  {cellZone ? (
+                    <div
+                      className="pointer-events-none absolute bg-primary/25 ring-2 ring-inset ring-primary"
+                      style={ZONE_OVERLAY[cellZone]}
+                    />
+                  ) : null}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
 
-        {/* 分割线把手：叠在每个 split 的接缝上，拖动写手动比例，双击恢复自动 */}
-        {splitRects.map((split) => {
-          const vertical = split.dir === 'v';
-          return (
-            // biome-ignore lint/a11y/noStaticElementInteractions: 指针拖拽把手：按下起手势、移动写比例、松手收尾
+          {/* 分割线把手：叠在每个 split 的接缝上，拖动写手动比例，双击恢复自动 */}
+          {splitRects.map((split) => {
+            const vertical = split.dir === 'v';
+            return (
+              // biome-ignore lint/a11y/noStaticElementInteractions: 指针拖拽把手：按下起手势、移动写比例、松手收尾
+              <div
+                key={`split-${split.path.join('-')}`}
+                title="拖动调整分割比例，双击恢复自动"
+                className="absolute z-10 bg-transparent transition-colors hover:bg-primary/30"
+                style={
+                  vertical
+                    ? {
+                        left: `${(split.x + split.width * split.share) * 100}%`,
+                        top: `${split.y * 100}%`,
+                        height: `${split.height * 100}%`,
+                        width: '8px',
+                        marginLeft: '-4px',
+                        cursor: 'col-resize',
+                      }
+                    : {
+                        top: `${(split.y + split.height * split.share) * 100}%`,
+                        left: `${split.x * 100}%`,
+                        width: `${split.width * 100}%`,
+                        height: '8px',
+                        marginTop: '-4px',
+                        cursor: 'row-resize',
+                      }
+                }
+                onPointerDown={(event) => {
+                  if (event.button !== 0) {
+                    return;
+                  }
+                  // 阻止默认行为避免选中文字/图片拖拽，并把后续指针事件锁到把手上
+                  event.preventDefault();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  splitDragRef.current = true;
+                  beginTransient();
+                }}
+                onPointerMove={(event) => {
+                  if (!splitDragRef.current || !contentRef.current) {
+                    return;
+                  }
+                  const bounds = contentRef.current.getBoundingClientRect();
+                  const fraction = vertical
+                    ? (event.clientX - bounds.left) / Math.max(bounds.width, 1)
+                    : (event.clientY - bounds.top) / Math.max(bounds.height, 1);
+                  setSplitRatio(split.path, fraction);
+                }}
+                onPointerUp={() => {
+                  if (!splitDragRef.current) {
+                    return;
+                  }
+                  splitDragRef.current = false;
+                  endTransient();
+                }}
+                onPointerCancel={() => {
+                  if (!splitDragRef.current) {
+                    return;
+                  }
+                  splitDragRef.current = false;
+                  endTransient();
+                }}
+                onDoubleClick={() => setSplitRatio(split.path, null)}
+              />
+            );
+          })}
+
+          {/* 根级插入预览：高亮画布内容区该侧的一半（实际比例由照片宽高比决定） */}
+          {dropTarget?.root ? (
             <div
-              key={`split-${split.path.join('-')}`}
-              title="拖动调整分割比例，双击恢复自动"
-              className="absolute z-10 bg-transparent transition-colors hover:bg-primary/30"
-              style={
-                vertical
-                  ? {
-                      left: `${(split.x + split.width * split.share) * 100}%`,
-                      top: `${split.y * 100}%`,
-                      height: `${split.height * 100}%`,
-                      width: '8px',
-                      marginLeft: '-4px',
-                      cursor: 'col-resize',
-                    }
-                  : {
-                      top: `${(split.y + split.height * split.share) * 100}%`,
-                      left: `${split.x * 100}%`,
-                      width: `${split.width * 100}%`,
-                      height: '8px',
-                      marginTop: '-4px',
-                      cursor: 'row-resize',
-                    }
-              }
-              onPointerDown={(event) => {
-                if (event.button !== 0) {
-                  return;
-                }
-                // 阻止默认行为避免选中文字/图片拖拽，并把后续指针事件锁到把手上
-                event.preventDefault();
-                event.currentTarget.setPointerCapture(event.pointerId);
-                splitDragRef.current = true;
-                beginTransient();
-              }}
-              onPointerMove={(event) => {
-                if (!splitDragRef.current || !contentRef.current) {
-                  return;
-                }
-                const bounds = contentRef.current.getBoundingClientRect();
-                const fraction = vertical
-                  ? (event.clientX - bounds.left) / Math.max(bounds.width, 1)
-                  : (event.clientY - bounds.top) / Math.max(bounds.height, 1);
-                setSplitRatio(split.path, fraction);
-              }}
-              onPointerUp={() => {
-                if (!splitDragRef.current) {
-                  return;
-                }
-                splitDragRef.current = false;
-                endTransient();
-              }}
-              onPointerCancel={() => {
-                if (!splitDragRef.current) {
-                  return;
-                }
-                splitDragRef.current = false;
-                endTransient();
-              }}
-              onDoubleClick={() => setSplitRatio(split.path, null)}
+              className="pointer-events-none absolute bg-primary/25 ring-2 ring-inset ring-primary"
+              style={ZONE_OVERLAY[dropTarget.zone]}
             />
-          );
-        })}
-
-        {/* 根级插入预览：高亮画布内容区该侧的一半（实际比例由照片宽高比决定） */}
-        {dropTarget?.root ? (
-          <div
-            className="pointer-events-none absolute bg-primary/25 ring-2 ring-inset ring-primary"
-            style={ZONE_OVERLAY[dropTarget.zone]}
-          />
-        ) : null}
+          ) : null}
+        </div>
       </div>
     </div>
   );

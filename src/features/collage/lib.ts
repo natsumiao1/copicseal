@@ -44,6 +44,7 @@ export function getDefaultCanvasState(): CollageCanvasState {
     borderRadius: 18,
     shadow: 18,
     fillMode: 'cover',
+    adaptiveFollowContent: true,
   };
 }
 
@@ -95,6 +96,10 @@ export function createAnnotation(kind: CollageAnnotation['type']): CollageAnnota
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
+
+/** 自由比例的安全范围：画布边角把手拖拽与自定义宽:高输入共用，避免极端比例撑爆预览 */
+export const MIN_CANVAS_RATIO = 0.2;
+export const MAX_CANVAS_RATIO = 5;
 
 export function getAspectRatioValue(canvas: CollageCanvasState): number {
   if (canvas.aspectPreset === 'custom') {
