@@ -81,6 +81,75 @@ function extractCssUrl(value: string): string | null {
   return match?.[2] ?? null;
 }
 
+/** 从 CSS transform 矩阵取缩放幅度：`sqrt(a²+b²)`，旋转不改变像素密度、被自然消掉。 */
+function transformScale(value: string): number {
+  if (!value || value === 'none') {
+    return 1;
+  }
+  const match = /^matrix\(([^)]+)\)$/.exec(value.trim());
+  if (!match) {
+    return 1;
+  }
+  const parts = match[1].split(',').map((item) => Number.parseFloat(item.trim()));
+  if (parts.length < 4 || parts.some((item) => !Number.isFinite(item))) {
+    return 1;
+  }
+  return Math.hypot(parts[0], parts[1]);
+}
+
+/**
+ * 节点相对导出根元素的累积缩放：自身与祖先（至根元素前）的 transform 缩放相乘。
+ *
+ * 槽位取景 / 自由布局把 `scale(1~3)` 写在 transform 里，它会线性放大照片的实际
+ * 像素需求；测量必须把这条链折进来，否则降采样目标会偏小，快照拿不足的栅格去
+ * 放大，格内取景的导出结果发糊。
+ */
+export function elementContentScale(node: Element, root: HTMLElement): number {
+  let scale = 1;
+  let current: Element | null = node;
+  while (current && current !== root) {
+    scale *= transformScale(getComputedStyle(current).transform);
+    current = current.parentElement;
+  }
+  return scale;
+}
+
+/**
+ * 图片按 object-fit 实际绘制出的尺寸（源像素口径）——降采样目标的基准。
+ *
+ * 输出端真正消耗的像素 = 绘制尺寸 × 倍率。cover 按撑满盒的轴算、contain 按贴合
+ * 盒的轴算、fill 即盒子本身；再乘 transform 累积缩放。源像素未知（尚未加载）时
+ * 回落盒子尺寸，与历史行为一致。
+ */
+function paintedImageSize(
+  image: HTMLImageElement,
+  root: HTMLElement,
+  scale: number,
+): { width: number; height: number } {
+  const factor = Math.max(scale, 1) * elementContentScale(image, root);
+  const boxWidth = image.clientWidth;
+  const boxHeight = image.clientHeight;
+  const naturalWidth = image.naturalWidth;
+  const naturalHeight = image.naturalHeight;
+
+  if (naturalWidth > 0 && naturalHeight > 0 && boxWidth > 0 && boxHeight > 0) {
+    const fit = getComputedStyle(image).objectFit;
+    if (fit === 'fill') {
+      return { width: Math.ceil(boxWidth * factor), height: Math.ceil(boxHeight * factor) };
+    }
+    const ratio =
+      fit === 'contain'
+        ? Math.min(boxWidth / naturalWidth, boxHeight / naturalHeight)
+        : Math.max(boxWidth / naturalWidth, boxHeight / naturalHeight);
+    return {
+      width: Math.ceil(naturalWidth * ratio * factor),
+      height: Math.ceil(naturalHeight * ratio * factor),
+    };
+  }
+
+  return { width: Math.ceil(boxWidth * factor), height: Math.ceil(boxHeight * factor) };
+}
+
 /**
  * 快照前把照片压到导出实际需要的分辨率，返回还原函数。
  *
@@ -88,7 +157,8 @@ function extractCssUrl(value: string): string | null {
  * （前景 `<img>` + 背景图层），原图较大时整个 SVG 超出 WebKit 的处理上限，
  * 内联的图片会整块丢失，导出结果只剩白板（背景模式为「图片」时必然触发）。
  *
- * 降采样到「渲染尺寸 × 输出倍率」不会损失可见画质——这正是导出结果实际用到的像素数——
+ * 降采样到「实际绘制尺寸（object-fit 盈缩 × transform 取景缩放）× 输出倍率」不会
+ * 损失可见画质——这正是导出结果实际用到的像素数——
  * 同时把内联体积压回安全范围。整个过程是尽力而为：任何一步失败都保持原图不动。
  */
 export async function capEmbeddedImages(
@@ -108,9 +178,10 @@ export async function capEmbeddedImages(
 
   for (const image of Array.from(element.querySelectorAll('img'))) {
     const src = image.currentSrc || image.src;
+    const painted = paintedImageSize(image, element, scale);
     targets.push({
-      maxWidth: Math.ceil(image.clientWidth * scale),
-      maxHeight: Math.ceil(image.clientHeight * scale),
+      maxWidth: painted.width,
+      maxHeight: painted.height,
       src,
       apply: (dataUrl) => {
         image.src = dataUrl;

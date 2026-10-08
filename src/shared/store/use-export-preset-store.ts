@@ -64,6 +64,23 @@ export const useExportPresetStore = create<ExportPresetStoreState>()(
       storage: createJSONStorage(() => coalescedLocalStorage),
       // 只持久化预设列表
       partialize: (state) => ({ presets: state.presets }),
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<ExportPresetStoreState> | undefined;
+        if (!persisted?.presets) {
+          return currentState;
+        }
+        return {
+          ...currentState,
+          ...persisted,
+          presets: persisted.presets.map((profile) =>
+            // 旧持久化数据可能缺 noUpscale（当时该开关仅 fit 模式携带）：补 false
+            profile.sizing.mode === 'auto' ||
+            (profile.sizing as { noUpscale?: boolean }).noUpscale !== undefined
+              ? profile
+              : { ...profile, sizing: { ...profile.sizing, noUpscale: false } },
+          ),
+        };
+      },
     },
   ),
 );

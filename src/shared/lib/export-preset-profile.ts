@@ -76,8 +76,10 @@ export function describeExportPreset(profile: ExportPresetProfile): string {
 
   parts.push(profile.format === 'jpeg' ? `JPEG 品质 ${profile.quality}` : 'PNG');
 
-  if (profile.sizing.mode === 'scale') {
-    parts.push(`缩放 ${profile.sizing.percent}%`);
+  if (profile.sizing.mode === 'auto') {
+    parts.push('自动（以原图为基准）');
+  } else if (profile.sizing.mode === 'scale') {
+    parts.push(`缩放 ${profile.sizing.percent}%${profile.sizing.noUpscale ? '（不放大）' : ''}`);
   } else {
     const axis = EXPORT_FIT_AXIS_LABELS[profile.sizing.axis];
     parts.push(`${axis} ${profile.sizing.px}px${profile.sizing.noUpscale ? '（不放大）' : ''}`);

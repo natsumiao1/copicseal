@@ -89,12 +89,17 @@ export type ExportFitAxis = 'long' | 'short' | 'width' | 'height';
 /**
  * 预设的输出尺寸意图。
  *
+ * - `auto`：自动（以原图为基准）——模板页等价于「缩放 100% + 不放大」（照片 1:1）；
+ *   拼图页直接取画布位图源像素算出的上限（最紧一张 1:1、其余缩小）
  * - `scale`：缩放图像——按照片原始像素的百分比（100 即 1:1；拼图页相对画布渲染尺寸）
- * - `fit`：调整大小至——主导轴精确命中 `px`，另一轴按画布比例推导；
- *   `noUpscale` 时不越过照片原始像素（拼图页为不放大到画布像素之上）
+ * - `fit`：调整大小至——主导轴精确命中 `px`，另一轴按画布比例推导
+ * - `noUpscale`：画质优先开关，scale / fit 两种模式都可携带，输出不超出照片原始像素——
+ *   模板页整体缩到不越过该张原图；拼图页以画布照片源像素收敛倍率
+ *   （最紧的一张恰好 1:1，其余缩小适配，见 `docs/features.md` 3.8）
  */
 export type ExportSizing =
-  | { mode: 'scale'; percent: number }
+  | { mode: 'auto' }
+  | { mode: 'scale'; percent: number; noUpscale: boolean }
   | { mode: 'fit'; axis: ExportFitAxis; px: number; noUpscale: boolean };
 
 /**

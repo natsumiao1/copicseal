@@ -61,7 +61,7 @@ export function ExportPresetDialog({ profile, onCancel, onSave }: ExportPresetDi
 
   // 尺寸意图的三种形态各自独立存文本，保存时才收敛成数字：
   // 输入框的中间态（空串、半个数字）不该把草稿弄成非法值
-  const [mode, setMode] = useState<'scale' | 'fit'>(profile.sizing.mode);
+  const [mode, setMode] = useState<'auto' | 'scale' | 'fit'>(profile.sizing.mode);
   const [percentText, setPercentText] = useState(
     String(profile.sizing.mode === 'scale' ? profile.sizing.percent : 100),
   );
@@ -71,8 +71,9 @@ export function ExportPresetDialog({ profile, onCancel, onSave }: ExportPresetDi
   const [pxText, setPxText] = useState(
     String(profile.sizing.mode === 'fit' ? profile.sizing.px : 2000),
   );
+  // auto 档不携带 noUpscale（自动本身就以原图为基准），按 false 初始化
   const [noUpscale, setNoUpscale] = useState(
-    profile.sizing.mode === 'fit' ? profile.sizing.noUpscale : false,
+    'noUpscale' in profile.sizing ? profile.sizing.noUpscale : false,
   );
 
   const [subfolderOn, setSubfolderOn] = useState(Boolean(profile.subfolder));
@@ -106,14 +107,20 @@ export function ExportPresetDialog({ profile, onCancel, onSave }: ExportPresetDi
       quality: clampInt(String(draft.quality), 1, 100, 90),
       subfolder: subfolderOn ? subfolderText.trim() || null : null,
       sizing:
-        mode === 'scale'
-          ? { mode: 'scale', percent: clampInt(percentText, 1, 1000, 100) }
-          : {
-              mode: 'fit',
-              axis: fitAxis,
-              px: clampInt(pxText, 16, 60000, 2000),
-              noUpscale,
-            },
+        mode === 'auto'
+          ? { mode: 'auto' }
+          : mode === 'scale'
+            ? {
+                mode: 'scale',
+                percent: clampInt(percentText, 1, 1000, 100),
+                noUpscale,
+              }
+            : {
+                mode: 'fit',
+                axis: fitAxis,
+                px: clampInt(pxText, 16, 60000, 2000),
+                noUpscale,
+              },
       // 关掉「包含原始元数据」时位置信息无处可剥，顺手清掉避免下次打开看着矛盾
       stripGps: draft.includeExif && draft.stripGps,
     });
@@ -265,9 +272,19 @@ export function ExportPresetDialog({ profile, onCancel, onSave }: ExportPresetDi
             <CoPanelSection title="图像调整尺寸">
               <RadioGroup
                 value={mode}
-                onValueChange={(value) => setMode(value as 'scale' | 'fit')}
+                onValueChange={(value) => setMode(value as 'auto' | 'scale' | 'fit')}
                 className="space-y-2"
               >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="auto" id="co-sizing-auto" />
+                  <label htmlFor="co-sizing-auto" className="text-xs text-foreground">
+                    自动（以原图为基准）
+                  </label>
+                  <span className="ml-auto text-[10px] text-muted-foreground">
+                    按原图上限自动计算
+                  </span>
+                </div>
+
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="scale" id="co-sizing-scale" />
                   <label htmlFor="co-sizing-scale" className="text-xs text-foreground">
@@ -315,17 +332,21 @@ export function ExportPresetDialog({ profile, onCancel, onSave }: ExportPresetDi
                     />
                     <span className="text-xs text-muted-foreground">像素</span>
                   </div>
-                  <div className="flex items-center gap-2 pl-6">
-                    <Switch
-                      checked={noUpscale}
-                      disabled={mode !== 'fit'}
-                      onCheckedChange={setNoUpscale}
-                    />
-                    <span className="text-xs text-foreground">不放大</span>
-                    <span className="text-[10px] text-muted-foreground">不超出照片原始像素</span>
-                  </div>
                 </div>
               </RadioGroup>
+
+              {/* 画质选项：与模式无关；auto 档本身即以原图为基准，开关禁用 */}
+              <div className="flex items-center gap-2 pt-1">
+                <Switch
+                  checked={noUpscale}
+                  disabled={mode === 'auto'}
+                  onCheckedChange={setNoUpscale}
+                />
+                <span className="text-xs text-foreground">不放大</span>
+                <span className="text-[10px] text-muted-foreground">
+                  {mode === 'auto' ? '自动已隐含不放大' : '画质优先，不超出照片原始像素'}
+                </span>
+              </div>
             </CoPanelSection>
 
             <CoPanelSection title="元数据">

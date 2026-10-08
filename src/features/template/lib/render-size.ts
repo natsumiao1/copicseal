@@ -259,12 +259,39 @@ export function resolvePreviewSizeTarget(
 }
 
 /**
+ * 画质优先（`noUpscale`）的通用收敛：目标框不越过照片原始像素，超出就整体缩小。
+ *
+ * 照片按 object-fit 铺进画框，目标框一旦超过原图像素就是插值放大；
+ * 量不出照片（尚未加载）时保持原目标框，与既往行为一致，不阻断导出。
+ */
+function shrinkTargetToPhotoNatural(
+  root: HTMLElement,
+  target: { width: number; height: number },
+): { width: number; height: number } {
+  const photo = getPhotoElement(root);
+  const naturalWidth = photo?.naturalWidth ?? 0;
+  const naturalHeight = photo?.naturalHeight ?? 0;
+  if (naturalWidth <= 0 || naturalHeight <= 0) {
+    return target;
+  }
+
+  const shrink = Math.min(naturalWidth / target.width, naturalHeight / target.height, 1);
+  if (shrink >= 1) {
+    return target;
+  }
+  return { width: target.width * shrink, height: target.height * shrink };
+}
+
+/**
  * 由预设的「图像调整尺寸」解算导出目标框。
  *
+ * - `auto`：自动（以原图为基准）——等价于 `scale` 100%（照片 1:1）并恒经
+ *   `shrinkTargetToPhotoNatural` 收敛，不放大到照片原始像素之外；
  * - `scale`：按照片原始像素的百分比反解（100 即 1:1），与预览的 photoPercent 同源；
  * - `fit`：画框比例的手动覆盖值优先，否则按画布（照片）比例给目标框，主导轴精确
  *   命中给定像素；`noUpscale` 时不越过照片原始像素（有背景时画框即成片尺寸，
  *   主导轴就是输出长 / 宽边）。
+ * - `scale` / `fit` 在 `noUpscale` 下同样经 `shrinkTargetToPhotoNatural` 收敛。
  *
  * 探针测量会写入 1000px 的临时基准，因此必须与 `applyRenderSize` 在同一任务里
  * 连续调用（中间不能有 await），否则预览会闪一下探针尺寸。
@@ -275,12 +302,19 @@ export function resolveExportSizeTarget(
   background: TemplateBackground,
   sizing: ExportSizing,
 ): RenderTarget | null {
-  if (sizing.mode === 'scale') {
+  if (sizing.mode === 'scale' || sizing.mode === 'auto') {
     const probe = probeRenderGeometry(root, PROBE_BASE);
     if (!probe) {
       return null;
     }
-    return derivePhotoPercentTarget(probe, background, sizing.percent);
+    const percent = sizing.mode === 'auto' ? 100 : sizing.percent;
+    const noUpscale = sizing.mode === 'auto' || sizing.noUpscale;
+    const target = derivePhotoPercentTarget(probe, background, percent);
+    if (!target) {
+      return null;
+    }
+    const resolved = noUpscale ? shrinkTargetToPhotoNatural(root, target) : target;
+    return { width: Math.round(resolved.width), height: Math.round(resolved.height) };
   }
 
   // fit：画框比例手动覆盖优先（无需探针）；自动时回落画布（照片）比例
@@ -324,18 +358,7 @@ export function resolveExportSizeTarget(
     height = px * aspect;
   }
 
-  if (noUpscale) {
-    const photo = getPhotoElement(root);
-    const naturalWidth = photo?.naturalWidth ?? 0;
-    const naturalHeight = photo?.naturalHeight ?? 0;
-    if (naturalWidth > 0 && naturalHeight > 0) {
-      const shrink = Math.min(naturalWidth / width, naturalHeight / height, 1);
-      if (shrink < 1) {
-        width *= shrink;
-        height *= shrink;
-      }
-    }
-  }
-
-  return { width: Math.round(width), height: Math.round(height) };
+  const target = { width, height };
+  const resolved = noUpscale ? shrinkTargetToPhotoNatural(root, target) : target;
+  return { width: Math.round(resolved.width), height: Math.round(resolved.height) };
 }

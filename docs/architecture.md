@@ -308,7 +308,7 @@ Collage Item：`id`、`assetId`、`x`、`y`、`width`、`height`、`scale`、`ro
 | subfolder | string \| null | 存储到指定名称的子文件夹；`null` 表示不建子目录 |
 | conflict | enum | `unique-name`（批内去重 + 查磁盘追加序号）/ `overwrite` |
 | format / quality | enum / number | `png` \| `jpeg`（WebP 暂不支持）；品质仅 JPEG 生效 |
-| sizing | object | 尺寸意图：缩放百分比，或调整大小至（长 / 短 / 宽 / 高边 + 像素 + 不放大） |
+| sizing | object | 尺寸意图：自动（以原图为基准），或缩放百分比（可勾不放大），或调整大小至（长 / 短 / 宽 / 高边 + 像素 + 不放大） |
 | includeExif / stripGps | boolean | 保留原图 EXIF；进一步剥离 GPS 位置信息 |
 
 落地为 `shared/store/use-export-preset-store.ts`（键 `copicseal-export-presets`，持久化），首启种子「默认预设」（id `default`）；预设行同时是拖拽导出的触发目标，UI 见 [requirements.md](./requirements.md) §5.5。

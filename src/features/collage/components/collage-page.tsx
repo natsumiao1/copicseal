@@ -22,53 +22,13 @@ import {
   BusinessWorkbenchPropertiesPane,
   BusinessWorkbenchWorkspace,
 } from '@/shared/layouts/business-workbench';
-import type { ExportPresetProfile, ExportSizing } from '@/shared/types/export';
+import type { ExportPresetProfile } from '@/shared/types/export';
 import { ScrollArea } from '@/shared/ui/scroll-area';
+import { resolveCollageSizing } from '../export-size';
 import { CollageCanvas, CollagePropertiesPanel, CollageToolbar } from '../exports';
 
 /** 拼图导出文件名的自动命名主干：拼图是整块画布，没有单张原图名可沿用。 */
 const COLLAGE_BASE_NAME = '拼图';
-
-/**
- * 预设的「图像调整尺寸」→ 拼图抓图倍率与输出宽高。
- *
- * 拼图没有照片原始像素可参照：缩放百分比相对画布当前渲染尺寸（预览区变化会
- * 随之漂移，属已知缺口），调整大小至按画布对应边折算倍率，`noUpscale` 不放大
- * 到画布像素之上。输出宽高仅用于自动命名 `{拼图}@{宽}x{高}`。
- */
-function resolveCollageSizing(element: HTMLElement, sizing: ExportSizing) {
-  const canvasWidth = element.offsetWidth;
-  const canvasHeight = element.offsetHeight;
-  if (canvasWidth <= 0 || canvasHeight <= 0) {
-    throw new Error('画布尚未就绪，无法解算导出尺寸');
-  }
-
-  let scale: number;
-  if (sizing.mode === 'scale') {
-    scale = sizing.percent / 100;
-  } else {
-    const basis =
-      sizing.axis === 'long'
-        ? Math.max(canvasWidth, canvasHeight)
-        : sizing.axis === 'short'
-          ? Math.min(canvasWidth, canvasHeight)
-          : sizing.axis === 'width'
-            ? canvasWidth
-            : canvasHeight;
-    scale = sizing.px / basis;
-    if (sizing.noUpscale) {
-      scale = Math.min(scale, 1);
-    }
-  }
-
-  // 过小的倍率会让快照失败，兜一个下限（0.05 约等于 16px 的极小输出）
-  scale = Math.min(Math.max(scale, 0.05), 16);
-  return {
-    scale,
-    width: Math.round(canvasWidth * scale),
-    height: Math.round(canvasHeight * scale),
-  };
-}
 
 function CollageHeader() {
   return (
@@ -159,7 +119,7 @@ export function CollagePage() {
     try {
       // 拼图没有单一原图，source-dir 在解析时回落到设置的导出目录
       const outputDir = await resolveProfileOutputDir(profile);
-      const { scale, width, height } = resolveCollageSizing(element, profile.sizing);
+      const { scale, width, height } = await resolveCollageSizing(element, profile.sizing);
       await prepareElementForSnapshot(element);
       await exportSingle(
         element,
