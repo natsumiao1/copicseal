@@ -80,7 +80,7 @@
 - [ ] **排序**：文件来源按文件名排序，无手动排序；自由布局的层叠顺序即画布添加顺序，无法调整
 - [ ] **WEBP**：导出管线 `ExportFormat` 只有 `png | jpeg`（`src/shared/types/export.ts`），模板页同样只有这两档，属管线级缺口（原因见 [features.md](./features.md) §3.3）
 - [ ] 拼图页无粘贴导入（模板页有 `window paste` 监听）
-- [ ] 拼图两处半成品：60 步 undo/redo 与标注（text / arrow / rect / circle）类型、store 齐全，但无 UI 入口、画布不渲染
+- [ ] 拼图标注半成品：`text` 已完成（工具栏入口、画布渲染拖动、面板编辑、快捷键，见 [features.md](./features.md) §2.6）；`arrow` / `rect` / `circle` 类型、store 齐全，但无 UI 入口、画布不渲染
 
 ---
 
@@ -121,7 +121,7 @@
 - [ ] **A26 拼图页没有粘贴导入**｜缺口｜成本 小（同 §2）
 - [ ] **A27 导入格式白名单变窄**｜缺口｜成本 小 —— 旧版 `accept="image/*"` 通吃；新版仅 jpg / jpeg / png / heic / heif / hif / webp，gif / bmp / tiff 被拒
 - [ ] **A28 旧配置迁移**｜缺口｜成本 中 —— 旧版 electron-store JSON，新版 SQLite `config_entries`，无迁移代码 → 升级后设置全丢（待确认是否有安装器侧迁移）
-- [ ] **A29 拼图页两处半成品**｜缺口｜成本 中（同 §2）
+- [ ] **A29 拼图标注（arrow / rect / circle）**｜缺口｜成本 中（同 §2）—— `text` 已完成，剩余三类类型、store 齐全但无 UI 入口
 - [ ] **A30 收藏 / 最近使用不持久化**｜缺口｜成本 小 —— 组件内 `useState` 硬编码初值，刷新即丢；旧版本无此功能，属新增未完成
 
 ### B. 默认值差异（影响开箱观感）
