@@ -160,3 +160,30 @@ body {
   animation: co-anchor-flash 1.6s ease-out;
   border-radius: var(--radius);
 }
+
+/* Radix Select 视口默认注入 `scrollbar-width:none` + `::-webkit-scrollbar{display:none}`
+   隐藏滚动条，改用 ScrollUpButton/ScrollDownButton 做滚动提示；那两个按钮有上游
+   滚动回跳 bug（radix-ui/primitives#3686），已在 ui/select.tsx 移除，因此这里恢复
+   原生滚动条作为长列表（如拼图字体下拉）的可滚提示。
+   选择器加 `html` 前缀提升特异性，压过 Radix 随内容注入的等特异性隐藏规则。 */
+html [data-radix-select-viewport] {
+  scrollbar-width: thin;
+  -ms-overflow-style: auto;
+}
+html [data-radix-select-viewport]::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+}
+html [data-radix-select-viewport]::-webkit-scrollbar-track {
+  background: transparent;
+}
+html [data-radix-select-viewport]::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--color-foreground) 25%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+html [data-radix-select-viewport]::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklch, var(--color-foreground) 45%, transparent);
+  background-clip: padding-box;
+}

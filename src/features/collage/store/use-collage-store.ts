@@ -65,14 +65,20 @@ function normalizeSlots(
 
 function normalizeAnnotations(annotations: CollageAnnotation[]): CollageAnnotation[] {
   return annotations.map((annotation) => {
-    if (annotation.type === 'text' && annotation.text === '双击右侧修改文字') {
-      return {
-        ...annotation,
-        text: '文字',
-        fontSize: Math.min(annotation.fontSize, 20),
-        width: Math.min(annotation.width, 0.22),
-        height: Math.min(annotation.height, 0.1),
-      };
+    if (annotation.type === 'text') {
+      // 旧持久化数据缺 vertical：补横排默认值，让数据形状统一（渲染处另有兜底）
+      const vertical = annotation.vertical ?? false;
+      if (annotation.text === '双击右侧修改文字') {
+        return {
+          ...annotation,
+          text: '文字',
+          fontSize: Math.min(annotation.fontSize, 20),
+          width: Math.min(annotation.width, 0.22),
+          height: Math.min(annotation.height, 0.1),
+          vertical,
+        };
+      }
+      return vertical === annotation.vertical ? annotation : { ...annotation, vertical };
     }
 
     return annotation;
@@ -456,6 +462,7 @@ export const useCollageStore = create<CollageStoreState>()(
         set({
           selectedAnnotationId: annotation.id,
           selectedSlotIndex: null,
+          selectedAdaptivePhotoId: null,
         });
       },
       updateAnnotation: (id, patch) => {

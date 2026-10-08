@@ -18,6 +18,8 @@ import {
   MIN_CANVAS_RATIO,
 } from '@/features/collage/lib';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
+import { useFontPreviewStore } from '@/features/collage/store/use-font-preview-store';
+import type { CollageTextAnnotation } from '@/features/collage/types';
 import { useElementSize } from '@/shared/hooks/use-element-size';
 import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
@@ -154,15 +156,20 @@ export function CollageCanvas({
   const {
     present,
     selectedSlotIndex,
+    selectedAnnotationId,
     restorePending,
     selectSlot,
+    selectAnnotation,
     assignPhotoToSlot,
+    updateAnnotation,
     commit,
     updateCanvas,
     beginTransient,
     updateSlotTransient,
     endTransient,
   } = useCollageStore();
+  // 悬浮预览独立成店：只有画布消费它，属性面板不随之重渲染（见该 store 注释）
+  const fontPreview = useFontPreviewStore((state) => state.fontPreview);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const viewportSize = useElementSize(viewportRef);
 
@@ -401,6 +408,89 @@ export function CollageCanvas({
     }
     resizeDraggingRef.current = false;
     setIsResizing(false);
+    endTransient();
+  };
+
+  /**
+   * 文字标注拖动的进行中快照：起始指针位与标注起点（画布相对坐标）。
+   * null = 没有进行中的拖动。
+   */
+  const annotationDragRef = useRef<{
+    id: string;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    bounds: { width: number; height: number };
+  } | null>(null);
+
+  /**
+   * 标注按下：立即选中并开始位移手势（整段合并为一步历史）。
+   * 坐标是画布相对值（0~1），屏幕位移按标注层实际尺寸换算后钳回画布内——同槽位把手的手势基线。
+   */
+  const startAnnotationDrag = (
+    event: React.PointerEvent<HTMLDivElement>,
+    annotation: CollageTextAnnotation,
+  ) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const layer = event.currentTarget.parentElement;
+    if (!layer) {
+      return;
+    }
+    // 阻止默认行为避免选中文字，并把后续指针事件锁到标注上
+    event.preventDefault();
+    selectAnnotation(annotation.id);
+
+    const bounds = layer.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      return;
+    }
+    annotationDragRef.current = {
+      id: annotation.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: annotation.x,
+      originY: annotation.y,
+      bounds: { width: bounds.width, height: bounds.height },
+    };
+    beginTransient();
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  /** 标注拖动中：按指针位移换算相对坐标增量，越界钳回画布内 */
+  const moveAnnotationDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const snapshot = annotationDragRef.current;
+    if (!snapshot) {
+      return;
+    }
+    const annotation = present.annotations.find((item) => item.id === snapshot.id);
+    if (!annotation) {
+      return;
+    }
+    const maxX = Math.max(0, 1 - annotation.width);
+    const maxY = Math.max(0, 1 - annotation.height);
+    updateAnnotation(snapshot.id, {
+      x: clamp(
+        snapshot.originX + (event.clientX - snapshot.startX) / snapshot.bounds.width,
+        0,
+        maxX,
+      ),
+      y: clamp(
+        snapshot.originY + (event.clientY - snapshot.startY) / snapshot.bounds.height,
+        0,
+        maxY,
+      ),
+    });
+  };
+
+  /** 标注拖动结束：基线确有变化时把整段位移压成一步历史 */
+  const endAnnotationDrag = () => {
+    if (!annotationDragRef.current) {
+      return;
+    }
+    annotationDragRef.current = null;
     endTransient();
   };
 
@@ -784,6 +874,69 @@ export function CollageCanvas({
                 })}
               </div>
             )}
+            {/* 文字标注层：必须在预览层内（导出 snapdom 截取此层），选中描边/空文案占位
+                标记 data-co-editing-chrome，由导出的 exclude 过滤，不进成片 */}
+            <div className="pointer-events-none absolute inset-0">
+              {present.annotations
+                .filter((annotation) => annotation.type === 'text')
+                .map((annotation) => {
+                  const isSelected = selectedAnnotationId === annotation.id;
+                  // 字体下拉悬浮预览：仅对目标标注生效，不改数据
+                  const fontFamily =
+                    fontPreview?.id === annotation.id
+                      ? (fontPreview.fontFamily ?? undefined)
+                      : (annotation.fontFamily ?? undefined);
+                  return (
+                    <div
+                      key={annotation.id}
+                      className={cn(
+                        'absolute flex cursor-move items-center justify-center whitespace-pre-wrap break-words text-center select-none',
+                        isSelected ? '' : 'hover:ring-1 hover:ring-inset hover:ring-primary/60',
+                      )}
+                      style={{
+                        left: `${annotation.x * 100}%`,
+                        top: `${annotation.y * 100}%`,
+                        width: `${annotation.width * 100}%`,
+                        height: `${annotation.height * 100}%`,
+                        transform: `rotate(${annotation.rotation}deg)`,
+                        color: annotation.color,
+                        fontSize: `${annotation.fontSize}px`,
+                        lineHeight: 1.3,
+                        // 竖排：中文直行（自右向左换列）；缺字段按横排兜底
+                        writingMode: annotation.vertical ? 'vertical-rl' : 'horizontal-tb',
+                        // 字体族：下拉悬浮预览优先，其次标注自身，缺省沿用应用默认字体栈
+                        fontFamily,
+                        // 拖动时画布背景可能反色，给文字加轻描边保证可读；导出同样生效（内容而非编辑态）
+                        textShadow: '0 1px 2px rgba(15, 23, 42, 0.35)',
+                        pointerEvents: 'auto',
+                      }}
+                      onPointerDown={(event) => startAnnotationDrag(event, annotation)}
+                      onPointerMove={moveAnnotationDrag}
+                      onPointerUp={endAnnotationDrag}
+                      onPointerCancel={endAnnotationDrag}
+                    >
+                      {annotation.text}
+                      {/* 空文案：只在编辑态给占位提示，导出时被 exclude 掉 */}
+                      {annotation.text.trim() === '' ? (
+                        <span
+                          data-co-editing-chrome=""
+                          style={{ writingMode: 'horizontal-tb' }}
+                          className="absolute inset-0 flex items-center justify-center rounded border border-dashed border-muted-foreground/50 text-xs text-muted-foreground"
+                        >
+                          输入文字
+                        </span>
+                      ) : null}
+                      {/* 选中描边：画在同元素外的覆盖层（旋转随之），导出时被 exclude 掉 */}
+                      {isSelected ? (
+                        <div
+                          data-co-editing-chrome=""
+                          className="pointer-events-none absolute -inset-1 ring-2 ring-inset ring-primary"
+                        />
+                      ) : null}
+                    </div>
+                  );
+                })}
+            </div>
           </div>
           {/* 边角把手：四角 = 横竖两臂的 L 形贴角，四边中点 = T 字形（横梁压在画布边缘线上、竖茎伸向画布内侧）；
               hover 浮现、拖动期间常显；导出只截预览层，不含把手 */}

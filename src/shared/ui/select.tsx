@@ -69,7 +69,11 @@ function SelectContent({
         align={align}
         {...props}
       >
-        <SelectScrollUpButton />
+        {/* 不渲染 ScrollUpButton / ScrollDownButton：Radix 上游 bug
+            （radix-ui/primitives#3686，修复 PR #3978 未合并、2.3.8 仍存在）——
+            滚动按钮到达可滚边界时挂载，挂载即对聚焦的选中项 scrollIntoView，
+            长列表（如拼图字体下拉）往下滚会被立刻拉回顶部，无法浏览后续项。
+            移除后靠滚轮 / 触控板滚动，视口 overflow 不受影响。 */}
         <SelectPrimitive.Viewport
           data-position={position}
           className={cn(
@@ -79,7 +83,6 @@ function SelectContent({
         >
           {children}
         </SelectPrimitive.Viewport>
-        <SelectScrollDownButton />
       </SelectPrimitive.Content>
     </SelectPrimitive.Portal>
   );

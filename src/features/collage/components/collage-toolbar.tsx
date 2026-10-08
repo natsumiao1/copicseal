@@ -1,4 +1,4 @@
-import { Grid2x2, Grid3x3, LayoutGrid, Trash2 } from 'lucide-react';
+import { Grid2x2, Grid3x3, LayoutGrid, Trash2, Type } from 'lucide-react';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import { Button } from '@/shared/ui/button';
@@ -41,6 +41,7 @@ export function CollageToolbar() {
   const setLayout = useCollageStore((state) => state.setLayout);
   const updateCanvas = useCollageStore((state) => state.updateCanvas);
   const clearAdaptiveCanvas = useCollageStore((state) => state.clearAdaptiveCanvas);
+  const addAnnotation = useCollageStore((state) => state.addAnnotation);
 
   // 当前布局来自布局库而非上面的快捷预设时，让「布局库」按钮保持按下态
   const libraryActive =
@@ -95,6 +96,18 @@ export function CollageToolbar() {
         onClick={() => updateCanvas({ layoutMode: 'adaptive' })}
       >
         自适应
+      </Button>
+
+      {/* 添加文字标注：新增后自动选中，属性面板切换到「文字」区块编辑；
+          空画布（无照片）不渲染预览层，标注无处落脚，先禁用 */}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={photos.length === 0}
+        onClick={() => addAnnotation('text')}
+      >
+        <Type data-icon="inline-start" />
+        添加文字
       </Button>
 
       {/* 只在自适应模式提供清空：grid 有自动填充（清了会被重新填满），free 恒显示全部照片 */}

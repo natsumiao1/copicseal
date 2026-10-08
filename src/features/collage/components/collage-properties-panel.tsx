@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   adaptivePhotoFitLimits,
   clampAdaptivePhotoFit,
@@ -15,11 +15,22 @@ import {
   MIN_CANVAS_RATIO,
 } from '@/features/collage/lib';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
-import type { AdaptivePhotoFit } from '@/features/collage/types';
+import { useFontPreviewStore } from '@/features/collage/store/use-font-preview-store';
+import type { AdaptivePhotoFit, CollageTextAnnotation } from '@/features/collage/types';
 import { CoPanelSection } from '@/shared/components/co-panel-section';
 import { usePhotos } from '@/shared/hooks/use-photos';
+import { useSystemFonts } from '@/shared/hooks/use-system-fonts';
+import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Slider } from '@/shared/ui/slider';
+import { Textarea } from '@/shared/ui/textarea';
+
+/**
+ * 字体下拉里「默认字体」的哨兵值：Radix Select 禁止空字符串 Item，
+ * 以哨兵表达「不指定 fontFamily，沿用应用默认字体栈」。
+ */
+const FONT_DEFAULT_SENTINEL = '__default__';
 
 interface RatioInputProps {
   value: number;
@@ -65,11 +76,252 @@ function RatioInput({ value, onCommit }: RatioInputProps) {
   );
 }
 
+interface AnnotationTextEditorProps {
+  annotation: CollageTextAnnotation;
+}
+
+/**
+ * 「文字」调整区块：文案多行输入 + 字号 / 颜色 / 旋转 / 宽高 + 删除。
+ *
+ * 文案输入走 transient 手势：聚焦开基线、失焦收拢为一步历史（逐键提交会把
+ * 撤销退化成按字符撤销）。组件在聚焦中被卸载时 React 不会触发 blur，
+ * 卸载清理兜底收拢，避免 `transientBase` 泄漏导致后续改动不进历史。
+ */
+function CollageAnnotationTextEditor({ annotation }: AnnotationTextEditorProps) {
+  const { updateAnnotation, removeAnnotation, beginTransient, endTransient } = useCollageStore();
+  // 预览独立成店且这里只取 action（引用恒定）：悬浮写入不得重渲染编辑器，
+  // 否则字体下拉随之重渲染、Radix 重跑 position()，触控板滚动会被拉回顶部
+  const setFontPreview = useFontPreviewStore((state) => state.setFontPreview);
+  const { fonts: systemFonts, loading: fontsLoading } = useSystemFonts();
+  const focusedRef = useRef(false);
+
+  /** 悬浮 / 键盘高亮选项时，让画布先预览该字体（不写入标注数据） */
+  const previewFont = (family: string | undefined) =>
+    setFontPreview({ id: annotation.id, fontFamily: family });
+  const clearFontPreview = () => setFontPreview(null);
+
+  // 选中值指向的字体可能已被系统卸载：补一个选项，保证下拉显示其名称而非占位
+  const fonts = useMemo(() => {
+    if (
+      !annotation.fontFamily ||
+      systemFonts.some((font) => font.family === annotation.fontFamily)
+    ) {
+      return systemFonts;
+    }
+    return [{ family: annotation.fontFamily, postscript_name: null }, ...systemFonts];
+  }, [systemFonts, annotation.fontFamily]);
+
+  useEffect(
+    () => () => {
+      if (focusedRef.current) {
+        focusedRef.current = false;
+        endTransient();
+      }
+      // 卸载兜底：下拉开着时切换选中 / 删除标注，预览不能残留
+      setFontPreview(null);
+    },
+    [endTransient, setFontPreview],
+  );
+
+  return (
+    <CoPanelSection
+      variant="flat"
+      title="文字"
+      description="画布上直接拖动文字调整位置；字号按画布渲染尺寸计，随导出等比放大。"
+    >
+      <div className="space-y-4">
+        <label htmlFor={`collage-annotation-text-${annotation.id}`} className="block space-y-1.5">
+          <span className="text-xs font-medium text-foreground">文案</span>
+          <Textarea
+            id={`collage-annotation-text-${annotation.id}`}
+            value={annotation.text}
+            placeholder="输入文字…"
+            rows={3}
+            onFocus={() => {
+              focusedRef.current = true;
+              beginTransient();
+            }}
+            onChange={(event) => updateAnnotation(annotation.id, { text: event.target.value })}
+            // 整段输入合并为一步历史：失焦时基线与当前值比对，未改动则不产生记录
+            onBlur={() => {
+              focusedRef.current = false;
+              endTransient();
+            }}
+          />
+        </label>
+
+        <div>
+          <span className="text-xs font-medium text-foreground">排列</span>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => updateAnnotation(annotation.id, { vertical: false })}
+              className={`border px-3 py-2 text-xs ${
+                annotation.vertical
+                  ? 'border-border'
+                  : 'border-primary bg-primary/5 text-foreground'
+              }`}
+            >
+              横排
+            </button>
+            <button
+              type="button"
+              onClick={() => updateAnnotation(annotation.id, { vertical: true })}
+              className={`border px-3 py-2 text-xs ${
+                annotation.vertical
+                  ? 'border-primary bg-primary/5 text-foreground'
+                  : 'border-border'
+              }`}
+            >
+              竖排
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <span className="text-xs font-medium text-foreground">字体</span>
+          <Select
+            value={annotation.fontFamily ?? FONT_DEFAULT_SENTINEL}
+            onValueChange={(value) => {
+              // 提交即落数据，同时收掉预览（画布回落到真实值，视觉无跳变）
+              clearFontPreview();
+              updateAnnotation(annotation.id, {
+                fontFamily: value === FONT_DEFAULT_SENTINEL ? undefined : value,
+              });
+            }}
+            onOpenChange={(open) => {
+              // Esc / 点击外部关闭：没有提交，预览必须还原
+              if (!open) clearFontPreview();
+            }}
+          >
+            <SelectTrigger className="mt-2 w-full" disabled={fontsLoading}>
+              <SelectValue placeholder={fontsLoading ? '字体加载中…' : '默认字体'} />
+            </SelectTrigger>
+            {/* 悬浮 / 键盘高亮即预览，离开选项区还原；数据只在真正选中时写入 */}
+            <SelectContent onMouseLeave={clearFontPreview}>
+              <SelectItem
+                value={FONT_DEFAULT_SENTINEL}
+                onMouseEnter={() => previewFont(undefined)}
+                onFocus={() => previewFont(undefined)}
+              >
+                默认字体
+              </SelectItem>
+              {fonts.map((font) => (
+                <SelectItem
+                  key={font.family}
+                  value={font.family}
+                  onMouseEnter={() => previewFont(font.family)}
+                  onFocus={() => previewFont(font.family)}
+                >
+                  {font.family}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+            <span>字号</span>
+            <span>{Math.round(annotation.fontSize)}px</span>
+          </div>
+          <Slider
+            value={[annotation.fontSize]}
+            onValueChange={([value]) => updateAnnotation(annotation.id, { fontSize: value })}
+            min={8}
+            max={96}
+            step={1}
+          />
+        </div>
+
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium text-foreground">颜色</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={annotation.color}
+              onChange={(event) => updateAnnotation(annotation.id, { color: event.target.value })}
+              className="h-9 w-12 border border-border bg-background p-1"
+            />
+            <Input
+              value={annotation.color}
+              onChange={(event) => updateAnnotation(annotation.id, { color: event.target.value })}
+            />
+          </div>
+        </label>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+            <span>旋转</span>
+            <span>{Math.round(annotation.rotation)}deg</span>
+          </div>
+          <Slider
+            value={[annotation.rotation]}
+            onValueChange={([value]) => updateAnnotation(annotation.id, { rotation: value })}
+            min={-180}
+            max={180}
+            step={1}
+          />
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+            <span>宽度</span>
+            <span>{Math.round(annotation.width * 100)}%</span>
+          </div>
+          <Slider
+            value={[annotation.width]}
+            onValueChange={([value]) =>
+              updateAnnotation(annotation.id, {
+                width: value,
+                // 变宽时右缘不得越出画布，同步回收 x
+                x: Math.min(annotation.x, 1 - value),
+              })
+            }
+            min={0.05}
+            max={1}
+            step={0.01}
+          />
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+            <span>高度</span>
+            <span>{Math.round(annotation.height * 100)}%</span>
+          </div>
+          <Slider
+            value={[annotation.height]}
+            onValueChange={([value]) =>
+              updateAnnotation(annotation.id, {
+                height: value,
+                y: Math.min(annotation.y, 1 - value),
+              })
+            }
+            min={0.04}
+            max={1}
+            step={0.01}
+          />
+        </div>
+
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full"
+          onClick={() => removeAnnotation(annotation.id)}
+        >
+          删除文字
+        </Button>
+      </div>
+    </CoPanelSection>
+  );
+}
+
 export function CollagePropertiesPanel() {
   const {
     present,
     selectedSlotIndex,
     selectedAdaptivePhotoId,
+    selectedAnnotationId,
     updateCanvas,
     updateSlot,
     setAdaptivePhotoFit,
@@ -78,6 +330,13 @@ export function CollagePropertiesPanel() {
 
   const selectedSlot =
     selectedSlotIndex !== null ? (present.slotItems[selectedSlotIndex] ?? null) : null;
+  /** 选中的文字标注（选择与槽位/自适应照片互斥，非 text 类型当前不产生 UI 入口） */
+  const selectedText =
+    selectedAnnotationId !== null
+      ? ((present.annotations.find(
+          (item) => item.id === selectedAnnotationId && item.type === 'text',
+        ) as CollageTextAnnotation | undefined) ?? null)
+      : null;
 
   const isAdaptive = present.canvas.layoutMode === 'adaptive';
   /** 自适应画布比例：默认跟随内容（画布 = 根节点比例），可切固定比例（套内容、居中留白） */
@@ -340,6 +599,8 @@ export function CollagePropertiesPanel() {
           </div>
         </div>
       </CoPanelSection>
+
+      {selectedText ? <CollageAnnotationTextEditor annotation={selectedText} /> : null}
 
       {isAdaptive ? (
         <CoPanelSection

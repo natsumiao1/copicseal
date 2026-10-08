@@ -2,6 +2,7 @@ import { Grid3x3 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { prepareElementForSnapshot } from '@/core/renderer';
 import { collectAdaptivePhotoIds } from '@/features/collage/adaptive';
+import { useCollageAnnotationShortcuts } from '@/features/collage/hooks/use-collage-annotation-shortcuts';
 import { useCollageHistoryShortcuts } from '@/features/collage/hooks/use-collage-history-shortcuts';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import { exportSingle, resolveProfileOutputDir } from '@/platform';
@@ -98,6 +99,7 @@ export function CollagePage() {
   const { ensureByPath } = usePhotoImportByPath();
   // 撤销/重做快捷键：随拼图页挂载/卸载，避免在其他页面误拦 Cmd+Z
   useCollageHistoryShortcuts();
+  useCollageAnnotationShortcuts();
 
   // 重启恢复：持久化的槽位与自适应树以文件路径为 photoId，逐个懒导入回填
   // （缓存大多还在，命中即秒回），完成后放行画布对账；导入失败的路径由对账按失效图清掉。
@@ -175,6 +177,8 @@ export function CollagePage() {
           dpi: 72,
           // 拼图画布是合成结果，没有可搬运的原图 EXIF
           preserveExif: false,
+          // 编辑态标记（文字选中描边、空文案占位）不进成片
+          exclude: ['[data-co-editing-chrome]'],
         },
         undefined,
         { baseName: COLLAGE_BASE_NAME, outputDir, conflict: profile.conflict },

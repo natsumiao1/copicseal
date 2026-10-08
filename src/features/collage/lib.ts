@@ -63,6 +63,7 @@ export function createAnnotation(kind: CollageAnnotation['type']): CollageAnnota
       color: '#111827',
       text: '文字',
       fontSize: 20,
+      vertical: false,
     };
   }
 

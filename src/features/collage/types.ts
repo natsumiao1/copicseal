@@ -115,6 +115,16 @@ export interface CollageTextAnnotation {
   color: string;
   text: string;
   fontSize: number;
+  /**
+   * 竖排（`writing-mode: vertical-rl`，中文直行）。缺省 = 横排：
+   * 旧持久化数据没有该字段，读取与渲染处按横排兜底。
+   */
+  vertical?: boolean;
+  /**
+   * 字体族（系统字体 family 名）。缺省 = 应用默认字体栈；
+   * 旧持久化数据没有该字段，读取与渲染处按缺省兜底。
+   */
+  fontFamily?: string;
 }
 
 export interface CollageArrowAnnotation {
