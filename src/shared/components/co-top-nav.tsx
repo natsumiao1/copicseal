@@ -2,6 +2,7 @@ import { Grid3x3, LayoutPanelLeft, LayoutTemplate, Settings2, Sparkles } from 'l
 import { useEffect } from 'react';
 import type { AppRoute } from '@/app/routes';
 import { platform } from '@/platform';
+import { CoExportProgressPill } from '@/shared/components/co-export-progress-pill';
 import { CoWindowControls } from '@/shared/components/co-window-controls';
 import type { WorkbenchPanelId } from '@/shared/layouts/business-workbench';
 import {
@@ -177,6 +178,8 @@ export function CoTopNav({ route, onRouteChange }: CoTopNavProps) {
         </nav>
 
         <div className="ml-auto flex h-full items-center gap-1" data-tauri-drag-region="false">
+          {/* 后台导出的全局进度，空闲时不渲染 */}
+          <CoExportProgressPill />
           {/* mac 的「视图」在系统菜单栏，这里只留 Windows 的下拉入口 */}
           {isMac ? null : (
             <DropdownMenu>

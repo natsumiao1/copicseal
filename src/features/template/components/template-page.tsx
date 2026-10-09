@@ -21,7 +21,6 @@ import {
 } from '@/platform';
 import {
   CoExportPresetPanel,
-  type ExportPresetRunState,
   type ExportPresetTrigger,
 } from '@/shared/components/co-export-preset-panel';
 import { CoFileSourceWorkbench } from '@/shared/components/co-file-source-workbench';
@@ -37,6 +36,7 @@ import {
   BusinessWorkbenchPropertiesPane,
   BusinessWorkbenchWorkspace,
 } from '@/shared/layouts/business-workbench';
+import { useExportRunStore } from '@/shared/store/use-export-run-store';
 import type { ExportPresetProfile } from '@/shared/types/export';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -55,6 +55,7 @@ import {
   useTemplatePhotoConfig,
   useTemplateStore,
 } from '../store/use-template-store';
+import { type ExportRenderJob, ExportRenderNode, waitForExportNode } from './export-render-node';
 
 function TemplateHeader() {
   return <CoWindowHeader icon={LayoutTemplate} title="边框水印" description="模板渲染与导出" />;
@@ -230,10 +231,11 @@ function buildExportOptions(profile: ExportPresetProfile): ExportOptions {
  * 必须连续执行（见 `resolveExportSizeTarget` 的说明），返回实际命中的目标框供
  * 自动命名。背景按目标照片自己的配置解算——批量导出时每张图的画框语义可能不同。
  *
- * 预览根节点以参数传入：解算发生在抓图前一刻，必须读到最新的 `previewRef.current`。
+ * 节点引用以参数传入（离屏导出节点）：解算发生在抓图前一刻，必须读到最新的
+ * `exportNodeRef.current`，且只作用于离屏节点，不碰预览。
  */
 function createRunContext(
-  previewRef: RefObject<HTMLDivElement | null>,
+  exportNodeRef: RefObject<HTMLDivElement | null>,
   name: string | undefined,
   outputDir: string | null,
   profile: ExportPresetProfile,
@@ -245,9 +247,9 @@ function createRunContext(
     conflict: profile.conflict,
     sizeAdapter: {
       prepare: async () => {
-        const element = previewRef.current;
+        const element = exportNodeRef.current;
         if (!element) {
-          throw new Error('预览未就绪，无法解算导出尺寸');
+          throw new Error('导出渲染节点未就绪，无法解算导出尺寸');
         }
         const target = resolveExportSizeTarget(element, photoBackground, profile.sizing);
         if (!target) {
@@ -263,7 +265,7 @@ function createRunContext(
 
 export function TemplatePage() {
   const previewRef = useRef<HTMLDivElement | null>(null);
-  const { photos, currentIndex, setCurrentIndex, currentPhoto } = usePhotos();
+  const { photos, currentIndex, currentPhoto } = usePhotos();
   // 模板、参数与背景都取自当前照片自己的配置
   const config = useTemplatePhotoConfig(currentPhoto?.id);
   const setTemplate = useTemplateStore((state) => state.setTemplate);
@@ -273,16 +275,18 @@ export function TemplatePage() {
   const prune = useTemplateStore((state) => state.prune);
   // 拖入的照片可能还没进会话：按路径懒导入
   const { ensureByPath } = usePhotoImportByPath();
-  // 导出期间挂起预览自适应，否则它会覆盖导出解算出的 --co-base
-  const [capturing, setCapturing] = useState(false);
   /**
-   * 进行中的导出：挂在所属预设行上显示进度 + 可取消的任务 id。
+   * 进行中的导出（全局 store）：顶栏进度胶囊与所属预设行共用同一份任务状态，
+   * 导出转后台后用户可以切页，进度不该只留在导出面板里。
    *
-   * 导出入口在「导出」面板的预设行（拖照片 / 行内按钮），状态放页面级，
-   * 保证转圈、进度与禁用是同一份；`taskId` 由调度器创建后回填（见
-   * `runScheduledExports`），取消走它。
+   * `taskId` 由调度器创建后回填（见 `runScheduledExports`），取消走它。
    */
-  const [exportRun, setExportRun] = useState<ExportPresetRunState | null>(null);
+  const exportRun = useExportRunStore((state) => state.run);
+  const setExportRun = useExportRunStore((state) => state.setRun);
+  const patchExportRun = useExportRunStore((state) => state.patchRun);
+  /** 离屏导出节点里的渲染任务；null 表示没有导出在跑 */
+  const [exportJob, setExportJob] = useState<ExportRenderJob | null>(null);
+  const exportNodeRef = useRef<HTMLDivElement | null>(null);
   /** 拖入的照片尚未导入时挂起的任务；会话列表更新后由下方 effect 接手 */
   const [pendingDrop, setPendingDrop] = useState<{
     profile: ExportPresetProfile;
@@ -303,13 +307,15 @@ export function TemplatePage() {
    * 首次在某张照片上进入纯色模式时，直接把照片的第一个主题色写进背景色：用户不必
    * 点色盘就已经拿到主色调。颜色一旦不等于默认值（说明用户自己挑过），或这张照片
    * 已经补过一次，就不再介入，避免覆盖用户的选择。
+   *
+   * 后台导出用启动时的配置快照渲染，这里改的是「正在编辑的照片」的实时配置，
+   * 两者互不干扰。
    */
   const paletteAppliedRef = useRef<string | null>(null);
   useEffect(() => {
     const photoId = currentPhoto?.id;
 
-    // 导出期间不写配置：批量导出会逐张切换照片，此时必须让导出严格按各自配置渲染
-    if (capturing || !photoId) {
+    if (!photoId) {
       return;
     }
 
@@ -326,7 +332,7 @@ export function TemplatePage() {
 
     paletteAppliedRef.current = photoId;
     setBackground(photoId, { ...config.background, color: palette.colors[0] });
-  }, [capturing, currentPhoto?.id, palette.colors, config.background, setBackground]);
+  }, [currentPhoto?.id, palette.colors, config.background, setBackground]);
 
   const handleApplyToOthers = (scope: TemplateApplyScope) => {
     if (!currentPhoto || otherPhotoCount === 0) {
@@ -344,27 +350,41 @@ export function TemplatePage() {
   /**
    * 启动一次导出：`indexes` 是待导出的照片下标（当前 / 拖拽 / 全部同一条路径）。
    *
-   * 逐张切换预览并按各自配置渲染；输出目录、冲突策略与元数据开关都来自预设。
-   * 单张失败只跳过该张，不中断整批。
+   * 启动时对每张照片做配置快照，之后渲染全部走离屏节点：预览区 DOM 不被改写，
+   * 用户可继续浏览与编辑，导出严格按启动那一刻的配置跑。输出目录、冲突策略与
+   * 元数据开关都来自预设。单张失败只跳过该张，不中断整批。
    *
    * memo 成稳定引用给下方挂起导出的 effect 当依赖；闭包只读 ref 与模块级函数，
    * 变化信号（会话列表、当前下标、任务状态）都在 deps 里。
    */
   const beginRun = useCallback(
     (profile: ExportPresetProfile, indexes: number[]) => {
+      // 配置快照：导出期间的编辑不回溯到本批任务
       const items = indexes.flatMap((index) => {
         const photo = photos[index];
-        return photo ? [{ index, photo }] : [];
+        if (!photo) {
+          return [];
+        }
+        const snapshot = getTemplatePhotoConfig(photo.id);
+        return [
+          {
+            photo,
+            config: structuredClone({
+              templateId: snapshot.templateId,
+              params: snapshot.params,
+              background: snapshot.background,
+            }),
+          },
+        ];
       });
       if (exportRun !== null || items.length === 0) {
         return;
       }
 
       setExportRun({ presetId: profile.id, completed: 0, total: items.length, taskId: null });
+      const jobId = `${profile.id}-${Date.now()}`;
 
       void (async () => {
-        const originalIndex = currentIndex;
-        setCapturing(true);
         let skipped = 0;
         let exported = 0;
         let lastDir: string | null = null;
@@ -372,22 +392,21 @@ export function TemplatePage() {
         try {
           const finishedTaskId = await runScheduledExports({
             items,
-            onTaskCreated: (taskId) => setExportRun((prev) => (prev ? { ...prev, taskId } : prev)),
-            onProgress: (completed, total) =>
-              setExportRun((prev) => (prev ? { ...prev, completed, total } : prev)),
-            runner: async ({ index, photo }) => {
+            onTaskCreated: (taskId) => patchExportRun({ taskId }),
+            onProgress: (completed, total) => patchExportRun({ completed, total }),
+            runner: async ({ photo, config }) => {
               try {
-                // 先切到目标照片，预览会按它自己的模板与参数重渲染
-                if (index !== originalIndex) {
-                  setCurrentIndex(index);
-                  await new Promise((resolve) => setTimeout(resolve, 120));
-                }
                 // EXIF 未就绪就抓图，模板里的机型与拍摄参数会是空的
-                await ensurePhotoExif(photo);
-                const element = previewRef.current;
-                if (!element) {
-                  return;
-                }
+                const exif = await ensurePhotoExif(photo);
+                const job: ExportRenderJob = {
+                  id: `${jobId}-${photo.id}`,
+                  photoUrl: photo.previewUrl,
+                  exif,
+                  config,
+                };
+                setExportJob(job);
+                // 等新任务的布局提交后再等图片加载，否则会量到上一任务的旧尺寸
+                const element = await waitForExportNode(exportNodeRef, job.id);
                 await waitForImages(element);
                 await prepareElementForSnapshot(element);
                 const outputDir = await resolveProfileOutputDir(profile, photo.path);
@@ -396,11 +415,11 @@ export function TemplatePage() {
                   buildExportOptions(profile),
                   photo.path,
                   createRunContext(
-                    previewRef,
+                    exportNodeRef,
                     photo.name,
                     outputDir,
                     profile,
-                    getTemplatePhotoConfig(photo.id).background,
+                    config.background,
                   ),
                 );
                 lastDir = outputDir;
@@ -425,13 +444,12 @@ export function TemplatePage() {
         } catch (error) {
           notifyExportFailed(error);
         } finally {
-          setCapturing(false);
-          setCurrentIndex(originalIndex);
+          setExportJob(null);
           setExportRun(null);
         }
       })();
     },
-    [currentIndex, exportRun, photos, setCurrentIndex],
+    [exportRun, patchExportRun, photos, setExportRun],
   );
 
   /** 导出面板入口：把触发方式翻译成照片下标序列，交给 beginRun。 */
@@ -491,58 +509,61 @@ export function TemplatePage() {
   };
 
   return (
-    <CoFileSourceWorkbench
-      routeKey="/template"
-      header={<TemplateHeader />}
-      workspace={
-        <BusinessWorkbenchWorkspace>
-          <div className="flex h-full w-full min-h-0 min-w-0 items-center justify-center">
-            <TemplatePreview
-              templateId={config.templateId}
-              params={config.params}
-              background={config.background}
-              previewRef={previewRef}
-              suspendAutoFit={capturing}
-            />
-          </div>
-        </BusinessWorkbenchWorkspace>
-      }
-      properties={() => (
-        <TemplatePropertiesPanel
-          activeTemplateId={config.templateId}
-          onTemplateChange={(templateId) => {
-            if (currentPhoto) {
-              setTemplate(currentPhoto.id, templateId);
-            }
-          }}
-          templateParams={config.params}
-          onTemplateParamsChange={(next) => {
-            if (currentPhoto) {
-              setParams(currentPhoto.id, next);
-            }
-          }}
-          background={config.background}
-          onBackgroundChange={(next) => {
-            if (currentPhoto) {
-              setBackground(currentPhoto.id, next);
-            }
-          }}
-          hasPhoto={currentPhoto !== null}
-          otherPhotoCount={otherPhotoCount}
-          onApplyToOthers={handleApplyToOthers}
-          palette={palette}
-        />
-      )}
-      export={() => (
-        <CoExportPresetPanel
-          run={exportRun}
-          singleLabel="导出当前照片"
-          showExportAll
-          disabled={!currentPhoto}
-          onExport={handleExportTrigger}
-          onCancel={handleCancelExport}
-        />
-      )}
-    />
+    <>
+      <CoFileSourceWorkbench
+        routeKey="/template"
+        header={<TemplateHeader />}
+        workspace={
+          <BusinessWorkbenchWorkspace>
+            <div className="flex h-full w-full min-h-0 min-w-0 items-center justify-center">
+              <TemplatePreview
+                templateId={config.templateId}
+                params={config.params}
+                background={config.background}
+                previewRef={previewRef}
+              />
+            </div>
+          </BusinessWorkbenchWorkspace>
+        }
+        properties={() => (
+          <TemplatePropertiesPanel
+            activeTemplateId={config.templateId}
+            onTemplateChange={(templateId) => {
+              if (currentPhoto) {
+                setTemplate(currentPhoto.id, templateId);
+              }
+            }}
+            templateParams={config.params}
+            onTemplateParamsChange={(next) => {
+              if (currentPhoto) {
+                setParams(currentPhoto.id, next);
+              }
+            }}
+            background={config.background}
+            onBackgroundChange={(next) => {
+              if (currentPhoto) {
+                setBackground(currentPhoto.id, next);
+              }
+            }}
+            hasPhoto={currentPhoto !== null}
+            otherPhotoCount={otherPhotoCount}
+            onApplyToOthers={handleApplyToOthers}
+            palette={palette}
+          />
+        )}
+        export={() => (
+          <CoExportPresetPanel
+            run={exportRun}
+            singleLabel="导出当前照片"
+            showExportAll
+            disabled={!currentPhoto}
+            onExport={handleExportTrigger}
+            onCancel={handleCancelExport}
+          />
+        )}
+      />
+      {/* 后台导出的离屏渲染节点：与预览同一套组件，不占用、也不改写预览区 */}
+      <ExportRenderNode job={exportJob} nodeRef={exportNodeRef} />
+    </>
   );
 }

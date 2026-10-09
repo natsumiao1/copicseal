@@ -89,8 +89,8 @@ adapter 门面（`FileAdapter` / `StorageAdapter` / `platform-runtime`）只增�
 
 ### 2.3 与预览、导出、缓存的关系
 
-- Workspace 是预览与导出内容的唯一视觉来源，不维护另一套隐藏模板
-- `snapDOM` 负责从稳定的 Workspace 生成渲染结果；Platform 负责后续编码与保存等宿主相关步骤
+- 预览与导出共用同一套渲染组件与尺寸解算：Template 导出在离屏节点（`ExportRenderNode`）按启动时的配置快照渲染，不改写预览区、不维护另一套导出专用模板；Collage 直接抓当前画布
+- `snapDOM` 负责从稳定的渲染节点（预览 / 离屏节点 / 画布）生成渲染结果；Platform 负责后续编码与保存等宿主相关步骤
 - HEIC/HIF 的快速预览可使用 JPEG preview，但最终导出不得只使用该 preview：导出应按需从原始素材生成临时高质量源，并在任务结束后清理或短期缓存
 - 缓存实现可以不同，但缓存键、过期策略与用户可清理语义应保持一致
 

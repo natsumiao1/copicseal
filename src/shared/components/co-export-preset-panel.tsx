@@ -9,6 +9,7 @@ import {
 } from '@/shared/lib/export-preset-profile';
 import { cn } from '@/shared/lib/utils';
 import { useExportPresetStore } from '@/shared/store/use-export-preset-store';
+import type { ExportPresetRunState } from '@/shared/store/use-export-run-store';
 import type { ExportPresetProfile } from '@/shared/types/export';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -20,15 +21,8 @@ export type ExportPresetTrigger =
   | { kind: 'single' }
   | { kind: 'all' };
 
-/** 进行中的导出任务：挂在对应预设行上显示进度与取消。 */
-export interface ExportPresetRunState {
-  /** 任务所属预设；进度与转圈只出现在这一行 */
-  presetId: string;
-  completed: number;
-  total: number;
-  /** 调度器创建后回填，取消走它 */
-  taskId: string | null;
-}
+// 任务状态收敛在全局 store：顶栏进度胶囊与本行共用同一份数据
+export type { ExportPresetRunState } from '@/shared/store/use-export-run-store';
 
 interface CoExportPresetPanelProps {
   /** 触发一次导出；照片拖拽的语义由页面解释（水印页导那张照片，拼图页导画布） */

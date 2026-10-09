@@ -1,15 +1,12 @@
 import { Grid3x3 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { prepareElementForSnapshot } from '@/core/renderer';
 import { collectAdaptivePhotoIds } from '@/features/collage/adaptive';
 import { useCollageAnnotationShortcuts } from '@/features/collage/hooks/use-collage-annotation-shortcuts';
 import { useCollageHistoryShortcuts } from '@/features/collage/hooks/use-collage-history-shortcuts';
 import { useCollageStore } from '@/features/collage/store/use-collage-store';
 import { exportSingle, resolveProfileOutputDir } from '@/platform';
-import {
-  CoExportPresetPanel,
-  type ExportPresetRunState,
-} from '@/shared/components/co-export-preset-panel';
+import { CoExportPresetPanel } from '@/shared/components/co-export-preset-panel';
 import { CoFileSourceWorkbench } from '@/shared/components/co-file-source-workbench';
 import {
   notifyExportedDirectory,
@@ -22,6 +19,7 @@ import {
   BusinessWorkbenchPropertiesPane,
   BusinessWorkbenchWorkspace,
 } from '@/shared/layouts/business-workbench';
+import { useExportRunStore } from '@/shared/store/use-export-run-store';
 import type { ExportPresetProfile } from '@/shared/types/export';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { resolveCollageSizing } from '../export-size';
@@ -104,10 +102,11 @@ export function CollagePage() {
   }, [ensureByPath, restorePending, setRestorePending]);
 
   /**
-   * 进行中的导出（与「边框水印」页同构）：挂在所属预设行上显示进度。
+   * 进行中的导出（全局 store，与「边框水印」页、顶栏进度胶囊共用同一份）。
    * 拼图没有批量语义，任务恒为单张画布。
    */
-  const [exportRun, setExportRun] = useState<ExportPresetRunState | null>(null);
+  const exportRun = useExportRunStore((state) => state.run);
+  const setExportRun = useExportRunStore((state) => state.setRun);
 
   /** 按预设导出当前画布：目录、冲突、格式画质与尺寸意图全部来自预设。 */
   const exportCanvas = async (profile: ExportPresetProfile) => {
