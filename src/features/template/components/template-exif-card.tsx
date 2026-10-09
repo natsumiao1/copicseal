@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import type { ExifData } from '@/platform';
+import { usePhotoExif } from '@/shared/hooks/use-photo-exif';
 import { usePhotos } from '@/shared/hooks/use-photos';
-import { usePhotoExif } from '../hooks/use-photo-exif';
 
 /** EXIF 拍摄时间形如 "2024:01:15 14:30:00"，转换为 "2024-01-15 14:30:00" 展示。 */
 function formatExifDate(value: string | null): string | null {

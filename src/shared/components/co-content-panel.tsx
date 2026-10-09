@@ -1,9 +1,10 @@
-import { Eraser, FolderOpen, Images, Loader2, Trash2, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Eraser, Fingerprint, FolderOpen, Images, Loader2, Trash2, X } from 'lucide-react';
+import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { pathExists, platform, toNativeFileUrl } from '@/platform';
 import type { FolderImageFile } from '@/platform/contracts';
 import { useElementSize } from '@/shared/hooks/use-element-size';
+import { invalidatePhotoExif } from '@/shared/hooks/use-photo-exif';
 import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import {
@@ -32,7 +33,16 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/shared/ui/context-menu';
+import { Switch } from '@/shared/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/shared/ui/tooltip';
+
+/** 能做段 / 块级去元数据的容器；HEIC 需解析 BMFF box，暂不支持（菜单项给出提示） */
+const STRIPPABLE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
+
+function isStrippable(name: string): boolean {
+  const lower = name.toLowerCase();
+  return STRIPPABLE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
 
 /** 网格列间距（对应 `gap-2`）。容器 `px-2` 的内边距不计入 contentRect，无需参与计算。 */
 const GRID_GAP = 8;
@@ -85,7 +95,7 @@ export function CoContentPanel() {
   const tagsStatus = useFilterStore((state) => state.tagsStatus);
   const tagsFolder = useFilterStore((state) => state.tagsFolder);
   const { selectByPath } = usePhotoImportByPath();
-  const { currentPhoto: sessionPhoto, importState } = usePhotos();
+  const { currentPhoto: sessionPhoto, importState, photos } = usePhotos();
 
   const importProgress =
     importState.total > 0 ? Math.min((importState.current / importState.total) * 100, 100) : 0;
@@ -93,8 +103,23 @@ export function CoContentPanel() {
   const [thumbs, setThumbs] = useState<Map<string, string>>(() => new Map());
   const [cacheDir, setCacheDir] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
-  /** 右键「删除」的待确认目标；null 表示确认弹窗关闭 */
-  const [deleteTarget, setDeleteTarget] = useState<FolderImageFile | null>(null);
+  /**
+   * 多选集合（按路径）：与「当前图片」是两套状态——当前图片随点击流转并联动画布，
+   * 选择集合只服务于右键批量操作。空数组表示没有多选。
+   */
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  /** 范围选择的锚点（上一次点选的路径），目录切换时复位 */
+  const selectionAnchorRef = useRef<string | null>(null);
+  /** 右键菜单打开与否：Esc 清除选择时先关菜单，避免「关菜单」顺带清掉选择 */
+  const menuOpenRef = useRef(false);
+  /** 右键「删除」的待确认目标（选中集合）；null 表示确认弹窗关闭 */
+  const [deleteTargets, setDeleteTargets] = useState<FolderImageFile[] | null>(null);
+  /** 右键「去除 EXIF 信息」的待确认目标（选中集合，已过滤掉不支持的格式）；null 表示关闭 */
+  const [stripTargets, setStripTargets] = useState<FolderImageFile[] | null>(null);
+  /** 确认弹窗里的「同时清除内嵌 XMP」开关；每次打开复位为关 */
+  const [stripRemoveXmp, setStripRemoveXmp] = useState(false);
+  /** 批量任务进行中：禁用菜单项，避免并发写盘 */
+  const [batchBusy, setBatchBusy] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const containerSize = useElementSize(containerRef);
@@ -118,12 +143,14 @@ export function CoContentPanel() {
     };
   }, []);
 
-  // 换文件夹即换一批条目：作废旧缩略图轮询、清空缩略图并回到列表顶部
+  // 换文件夹即换一批条目：作废旧缩略图轮询、清空缩略图与多选并回到列表顶部
   // biome-ignore lint/correctness/useExhaustiveDependencies: folderPath 只作为「目录已切换」的触发信号，效果体内无需引用
   useEffect(() => {
     generationRef.current += 1;
     pendingThumbRef.current.clear();
     setThumbs(new Map());
+    setSelectedPaths([]);
+    selectionAnchorRef.current = null;
     setScrollTop(0);
     if (containerRef.current) {
       containerRef.current.scrollTop = 0;
@@ -145,6 +172,39 @@ export function CoContentPanel() {
       (entry) => !removedSet.has(entry.path) && matchesFilter(entry, resolved, tags),
     );
   }, [availability, criteria, entries, removedSet, tags, tagsReady]);
+
+  // 展示集合变化（移除隐藏 / 筛选 / 换目录）后剔除失效的选中路径：选择只作用于看得见的条目
+  useEffect(() => {
+    setSelectedPaths((prev) => {
+      if (prev.length === 0) {
+        return prev;
+      }
+      const visible = new Set(visibleEntries.map((entry) => entry.path));
+      const next = prev.filter((path) => visible.has(path));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [visibleEntries]);
+
+  // Esc 清除多选：确认弹窗或右键菜单开着时不动（那次 Esc 归它们）
+  useEffect(() => {
+    if (selectedPaths.length === 0) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== 'Escape' ||
+        deleteTargets !== null ||
+        stripTargets !== null ||
+        menuOpenRef.current
+      ) {
+        return;
+      }
+      setSelectedPaths([]);
+      selectionAnchorRef.current = null;
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [deleteTargets, selectedPaths.length, stripTargets]);
 
   /**
    * 行布局只跟随容器宽度：占位一律正方形，横竖照片的显示面积相当，
@@ -213,61 +273,240 @@ export function CoContentPanel() {
   }, [ensureThumb, pendingVisible]);
 
   /**
-   * 确认删除：把文件移入系统回收站，成功后从列表隐藏。
+   * 逐张执行的批量任务：单张与多张共用一个入口，菜单不用分支。
    *
-   * 已入会话的素材渲染用的是缓存副本，原文件被移走不影响预览与导出，因此不动会话；
-   * 失败只提示不隐藏，条目继续留在列表里。
+   * 进度用同一条 toast 原地更新（sonner 的 `id` 复用），批量结束给成功 / 失败汇总；
+   * 单张仍走「一条成功提示」的旧反馈。串行而不是并发：写盘任务并发只会互相抢 IO，
+   * 还会让进度失真；单张失败计入失败数后继续跑下一张，与导出「跳过该张」的语义一致。
+   *
+   * worker 返回「单张成功时的提示文案」，批量场景忽略（由汇总承担反馈）。
    */
-  const trashEntry = useCallback(
-    async (target: FolderImageFile) => {
+  const runBatch = useCallback(
+    async (
+      label: string,
+      targets: FolderImageFile[],
+      worker: (target: FolderImageFile) => Promise<string | undefined>,
+    ) => {
+      if (targets.length === 0) {
+        return;
+      }
+      setBatchBusy(true);
       try {
-        await platform.files.moveToTrash(target.path);
-        hideEntry(target.path);
-        toast.success(`已移到回收站：${target.name}`);
-      } catch (error) {
-        console.warn('[file-source] 移入回收站失败:', error);
-        toast.error(`删除失败：${target.name}`, { description: String(error) });
+        if (targets.length === 1) {
+          try {
+            const message = await worker(targets[0]);
+            if (message) {
+              toast.success(message);
+            }
+          } catch (error) {
+            console.warn(`[file-source] ${label}失败:`, targets[0].name, error);
+            toast.error(`${label}失败：${targets[0].name}`, { description: String(error) });
+          }
+          return;
+        }
+
+        const toastId = 'file-source-batch';
+        let failed = 0;
+        let lastError: unknown = null;
+        toast.loading(`${label} 0 / ${targets.length}`, {
+          id: toastId,
+          description: targets[0].name,
+        });
+        for (const [index, target] of targets.entries()) {
+          try {
+            await worker(target);
+          } catch (error) {
+            failed += 1;
+            lastError = error;
+            console.warn(`[file-source] ${label}失败:`, target.name, error);
+          }
+          toast.loading(`${label} ${index + 1} / ${targets.length}`, {
+            id: toastId,
+            description: target.name,
+          });
+        }
+        if (failed === 0) {
+          toast.success(`${label}完成：${targets.length} 张`, { id: toastId });
+        } else {
+          toast.warning(`${label}部分失败：${targets.length - failed} 成功、${failed} 失败`, {
+            id: toastId,
+            description: String(lastError ?? ''),
+          });
+        }
+      } finally {
+        setBatchBusy(false);
       }
     },
-    [hideEntry],
+    [],
   );
 
   /**
-   * 清空该条目的缩略图缓存（派生数据）：状态里同步移除，视口再次滚到时重新生成。
+   * 移入回收站（单张或多张），成功后从列表隐藏。
+   *
+   * 已入会话的素材渲染用的是缓存副本，原文件被移走不影响预览与导出，因此不动会话；
+   * 失败只计入汇总，条目继续留在列表里。
+   */
+  const trashTargets = useCallback(
+    async (targets: FolderImageFile[]) => {
+      await runBatch('移入回收站', targets, async (target) => {
+        await platform.files.moveToTrash(target.path);
+        hideEntry(target.path);
+        return `已移到回收站：${target.name}`;
+      });
+    },
+    [hideEntry, runBatch],
+  );
+
+  /**
+   * 清空缩略图缓存（派生数据，单张或多张）：状态里同步移除，视口再次滚到时重新生成。
    *
    * 导入副本与预览副本是素材会话在用的独立缓存，不在这里动（设置页的缓存清理管它们）。
    */
   const clearThumbCache = useCallback(
-    async (target: FolderImageFile) => {
+    async (targets: FolderImageFile[]) => {
       if (!cacheDir) {
         return;
       }
-      try {
+      await runBatch('清空缓存', targets, async (target) => {
         const removed = await platform.files.clearBrowseThumbnail(target.path, cacheDir);
         setThumbs((prev) => {
           const next = new Map(prev);
           next.delete(target.path);
           return next;
         });
-        toast.success(
-          removed ? `已清空缩略图缓存：${target.name}` : `没有可清的缩略图缓存：${target.name}`,
-        );
-      } catch (error) {
-        console.warn('[file-source] 清空缩略图缓存失败:', error);
-        toast.error(`清空缓存失败：${target.name}`, { description: String(error) });
-      }
+        return removed
+          ? `已清空缩略图缓存：${target.name}`
+          : `没有可清的缩略图缓存：${target.name}`;
+      });
     },
-    [cacheDir],
+    [cacheDir, runBatch],
   );
 
   const selectedId = sessionPhoto?.id ?? null;
+  const selectedSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
+  /** 选中条目的实体列表（按目录顺序）：只在选择变化时过滤一次，避免每个格子各自扫全量条目 */
+  const selectedEntries = useMemo(
+    () => entries.filter((item) => selectedSet.has(item.path)),
+    [entries, selectedSet],
+  );
+  /** 选中集合里支持去除 EXIF 的子集路径：菜单的「暂不支持 / 跳过 N 张」按它计数 */
+  const strippableSelected = useMemo(
+    () =>
+      new Set(selectedEntries.filter((item) => isStrippable(item.name)).map((item) => item.path)),
+    [selectedEntries],
+  );
+
+  /**
+   * 确认后原地改写文件：先处理原图，再处理已入会话的缓存副本。
+   *
+   * 缓存副本才是素材会话与导出实际读的文件（`originalPath` 指向原图）：只改原图的
+   * 话，导出勾了「包含原始元数据」仍会把 EXIF 带出去，EXIF 卡片也停在旧值。副本改完
+   * 逐个作废 EXIF 缓存，卡片与水印模板立即按新文件重读。
+   */
+  const stripExifTargets = useCallback(
+    async (targets: FolderImageFile[], removeXmp: boolean) => {
+      await runBatch('去除 EXIF', targets, async (target) => {
+        const changed = await platform.files.stripImageExif(target.path, removeXmp);
+
+        let copyChanged = false;
+        for (const photo of photos) {
+          // 会话副本与原图是同一个文件时，上面那步已经改过，只需作废缓存
+          if (photo.path === target.path) {
+            invalidatePhotoExif(photo.id);
+            continue;
+          }
+          if (photo.originalPath !== target.path) {
+            continue;
+          }
+          copyChanged = (await platform.files.stripImageExif(photo.path, removeXmp)) || copyChanged;
+          invalidatePhotoExif(photo.id);
+        }
+
+        if (!changed && !copyChanged) {
+          return `未发现可去除的元数据：${target.name}`;
+        }
+        return `已去除 EXIF 信息：${target.name}`;
+      });
+
+      // XMP 的计数来自标签数据：整批结束后统一强制重读一次，筛选器数量即时刷新
+      if (removeXmp && folderPath && entries.length > 0) {
+        await useFilterStore.getState().loadTags(
+          entries.map((entry) => entry.path),
+          folderPath,
+          { force: true },
+        );
+      }
+    },
+    [entries, folderPath, photos, runBatch],
+  );
+
+  /**
+   * 单元格点击：按修饰键分流。
+   *
+   * 普通点击沿用原语义（加入素材会话并设为当前图片），同时把选择集合收缩为这一张；
+   * Cmd / Ctrl 逐张增减、Shift 按列表顺序取范围，这两种只动选择集合、不切换当前图片
+   * （与文件管理器一致：多选是为批量操作服务的，不接管「看哪张」）。
+   */
+  const handleEntryClick = (entry: FolderImageFile, event: MouseEvent<HTMLButtonElement>) => {
+    const anchor = selectionAnchorRef.current;
+
+    if (event.shiftKey && anchor) {
+      const paths = visibleEntries.map((item) => item.path);
+      const from = paths.indexOf(anchor);
+      const to = paths.indexOf(entry.path);
+      if (from !== -1 && to !== -1) {
+        const [start, end] = from < to ? [from, to] : [to, from];
+        setSelectedPaths(paths.slice(start, end + 1));
+        return;
+      }
+    }
+    if (event.metaKey || event.ctrlKey) {
+      selectionAnchorRef.current = entry.path;
+      setSelectedPaths((prev) =>
+        prev.includes(entry.path)
+          ? prev.filter((path) => path !== entry.path)
+          : [...prev, entry.path],
+      );
+      return;
+    }
+
+    // 无修饰键（含没有锚点的 Shift 点击）：选择收缩为这一张；只有普通点击才切当前图片
+    selectionAnchorRef.current = entry.path;
+    setSelectedPaths([entry.path]);
+    if (!event.shiftKey) {
+      void selectByPath(entry.path);
+    }
+  };
+
+  /** 右键目标 = 当前选中集合；右键未选中的条目时集合已先收缩为该条目（见触发器的 onContextMenu）。 */
+  const resolveTargets = (entry: FolderImageFile): FolderImageFile[] => {
+    return selectedSet.has(entry.path) ? selectedEntries : [entry];
+  };
+
+  /** 右键目标里支持去除 EXIF 的子集：不支持的格式不进弹窗，菜单上先提示跳过张数 */
+  const resolveStrippableTargets = (entry: FolderImageFile): FolderImageFile[] => {
+    return resolveTargets(entry).filter((target) => isStrippable(target.name));
+  };
 
   const renderEntry = (entry: FolderImageFile) => {
     const thumbUrl = thumbs.get(entry.path) ?? null;
-    const isSelected = selectedId === entry.path;
+    // 「当前图片」的高亮环与「多选」的对勾是两套状态，可以同时成立
+    const isCurrent = selectedId === entry.path;
+    const isSelected = selectedSet.has(entry.path);
+    // 渲染期只算张数、不取实体（选择集可能很大，每个格子都过滤全量就是 O(格子 × 条目)）；
+    // 实体在菜单点击时经 resolveTargets / resolveStrippableTargets 取一次即可
+    const targetCount = isSelected ? selectedEntries.length : 1;
+    const singleStrippable = isStrippable(entry.name) ? 1 : 0;
+    const strippableCount = isSelected ? strippableSelected.size : singleStrippable;
+    const skippedCount = targetCount - strippableCount;
 
     return (
-      <ContextMenu key={entry.path}>
+      <ContextMenu
+        key={entry.path}
+        onOpenChange={(open) => {
+          menuOpenRef.current = open;
+        }}
+      >
         <ContextMenuTrigger asChild>
           {/* biome-ignore lint/a11y/noStaticElementInteractions: 整张卡片是拖拽源；点击由内层 button 承担 */}
           <div
@@ -278,20 +517,27 @@ export function CoContentPanel() {
               event.dataTransfer.setData('text/plain', entry.path);
               event.dataTransfer.effectAllowed = 'copy';
             }}
+            onContextMenu={() => {
+              // 右键落在未选中的条目上：菜单改作用于这一张（文件管理器惯例）
+              if (!selectedSet.has(entry.path)) {
+                selectionAnchorRef.current = entry.path;
+                setSelectedPaths([entry.path]);
+              }
+            }}
             className="group relative"
           >
             <button
               type="button"
-              onClick={() => void selectByPath(entry.path)}
+              onClick={(event) => handleEntryClick(entry, event)}
               className="block w-full text-left"
             >
               <div
                 className={cn(
                   // 占位正方形：照片完整显示、留白不裁切，横竖图显示面积相当
                   'relative aspect-square overflow-hidden rounded-sm border bg-muted/40 transition-colors',
-                  isSelected
-                    ? 'border-primary ring-1 ring-primary/40'
-                    : 'border-border/70 group-hover:border-primary/40',
+                  isCurrent && 'border-primary ring-1 ring-primary/40',
+                  isSelected && 'border-primary bg-primary/10',
+                  !isCurrent && !isSelected && 'border-border/70 group-hover:border-primary/40',
                 )}
               >
                 {thumbUrl ? (
@@ -309,6 +555,11 @@ export function CoContentPanel() {
                     </span>
                   </div>
                 )}
+                {isSelected ? (
+                  <span className="absolute left-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
+                    <Check className="size-2.5" />
+                  </span>
+                ) : null}
               </div>
               <div className="flex items-baseline gap-1.5 px-0.5 pt-1 leading-4">
                 <span className="min-w-0 truncate text-[10px] text-foreground/90">
@@ -335,13 +586,35 @@ export function CoContentPanel() {
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem disabled={!cacheDir} onSelect={() => void clearThumbCache(entry)}>
+          <ContextMenuItem
+            disabled={!cacheDir || batchBusy}
+            onSelect={() => void clearThumbCache(resolveTargets(entry))}
+          >
             <Eraser />
-            清空缓存
+            清空缓存{targetCount > 1 ? `（${targetCount} 张）` : ''}
           </ContextMenuItem>
-          <ContextMenuItem variant="destructive" onSelect={() => setDeleteTarget(entry)}>
+          <ContextMenuItem
+            disabled={strippableCount === 0 || batchBusy}
+            onSelect={() => {
+              setStripRemoveXmp(false);
+              setStripTargets(resolveStrippableTargets(entry));
+            }}
+          >
+            <Fingerprint />
+            去除 EXIF 信息{strippableCount > 1 ? `（${strippableCount} 张）` : ''}
+            {strippableCount === 0 ? (
+              <span className="ml-auto pl-2 text-[10px] opacity-60">暂不支持</span>
+            ) : skippedCount > 0 ? (
+              <span className="ml-auto pl-2 text-[10px] opacity-60">{skippedCount} 张暂不支持</span>
+            ) : null}
+          </ContextMenuItem>
+          <ContextMenuItem
+            variant="destructive"
+            disabled={batchBusy}
+            onSelect={() => setDeleteTargets(resolveTargets(entry))}
+          >
             <Trash2 />
-            删除
+            删除{targetCount > 1 ? `（${targetCount} 张）` : ''}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -415,6 +688,20 @@ export function CoContentPanel() {
     );
   };
 
+  /** 删除弹窗文案：目标是一张或多张，主语随数量变化，去向说明共用一句 */
+  const deleteDescription =
+    deleteTargets && deleteTargets.length === 1
+      ? `「${deleteTargets[0].name}」将被移到系统回收站，可随时从中恢复。`
+      : `选中的 ${deleteTargets?.length ?? 0} 张文件将被移到系统回收站，可随时从中恢复。`;
+
+  /** 去除 EXIF 弹窗文案：主语 + 固定说明（覆盖原文件、方向保留、会话副本一并处理） */
+  const stripDescription =
+    (stripTargets && stripTargets.length === 1
+      ? `「${stripTargets[0].name}」`
+      : `选中的 ${stripTargets?.length ?? 0} 张文件`) +
+    '的相机型号、拍摄参数与 GPS 位置等 EXIF 信息将从文件中移除，并直接覆盖原文件，不可撤销。' +
+    '方向（Orientation）会被保留，图片显示方向不受影响；已加入素材的照片会一并处理其缓存副本。';
+
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col bg-card">
@@ -469,7 +756,7 @@ export function CoContentPanel() {
           </div>
         )}
 
-        {/* 信息行放在面板最下方：文件夹名 · 图片数（筛选 / 隐藏生效时为命中数 / 总数） */}
+        {/* 信息行放在面板最下方：文件夹名 · 图片数（筛选 / 隐藏生效时为命中数 / 总数） · 已选数 */}
         {folderPath ? (
           <div className="flex shrink-0 items-center border-t border-border/80 px-3 py-2">
             <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
@@ -477,6 +764,7 @@ export function CoContentPanel() {
               {visibleEntries.length === entries.length
                 ? `${entries.length} 张图片`
                 : `${visibleEntries.length} / ${entries.length} 张图片`}
+              {selectedPaths.length > 0 ? ` · 已选 ${selectedPaths.length} 张` : ''}
             </p>
           </div>
         ) : null}
@@ -484,31 +772,76 @@ export function CoContentPanel() {
 
       {/* 删除确认：右键菜单点了「删除」才打开；Action 点击后弹窗自行关闭 */}
       <AlertDialog
-        open={deleteTarget !== null}
+        open={deleteTargets !== null}
         onOpenChange={(open) => {
           if (!open) {
-            setDeleteTarget(null);
+            setDeleteTargets(null);
           }
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>移到回收站？</AlertDialogTitle>
-            <AlertDialogDescription>
-              「{deleteTarget?.name}」将被移到系统回收站，可随时从中恢复。
-            </AlertDialogDescription>
+            <AlertDialogDescription>{deleteDescription}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
-                if (deleteTarget) {
-                  void trashEntry(deleteTarget);
+                if (deleteTargets) {
+                  void trashTargets(deleteTargets);
                 }
               }}
             >
               移到回收站
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/*
+        去除 EXIF 确认：右键菜单点了「去除 EXIF 信息」才打开（目标是选中集合里
+        支持的格式）。原文件被直接覆盖且不可撤销，因此先给出去向、方向保留与副本
+        处理的说明，XMP 作为可选项放行。
+      */}
+      <AlertDialog
+        open={stripTargets !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setStripTargets(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>去除 EXIF 信息？</AlertDialogTitle>
+            <AlertDialogDescription>{stripDescription}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-foreground">同时清除内嵌 XMP 信息</div>
+              <div className="text-[10px] text-muted-foreground">
+                星级与颜色标签将丢失；同名 .xmp sidecar 文件不受影响
+              </div>
+            </div>
+            <Switch
+              checked={stripRemoveXmp}
+              onCheckedChange={setStripRemoveXmp}
+              aria-label="同时清除内嵌 XMP 信息"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (stripTargets) {
+                  void stripExifTargets(stripTargets, stripRemoveXmp);
+                }
+              }}
+            >
+              覆盖原文件
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

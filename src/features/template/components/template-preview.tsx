@@ -9,10 +9,10 @@ import {
 import { TemplateRuntime } from '@/features/template/runtime';
 import { resolveBuiltinTemplate } from '@/features/template/runtime/template-registry';
 import { useElementSize } from '@/shared/hooks/use-element-size';
+import { usePhotoExif } from '@/shared/hooks/use-photo-exif';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import { Button } from '@/shared/ui/button';
 import { ScrollArea } from '@/shared/ui/scroll-area';
-import { usePhotoExif } from '../hooks/use-photo-exif';
 import { TemplateBackgroundFrame } from './template-background-frame';
 
 type TemplateZoomMode = 'fit' | 50 | 100 | 200;

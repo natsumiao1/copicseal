@@ -68,6 +68,7 @@ pub fn run() {
             exif::extract_jpeg_exif,
             exif::insert_jpeg_exif,
             exif::strip_exif_gps,
+            exif::strip_image_exif,
             tags::read_image_tags,
             font::list_system_fonts,
             system::get_app_info,

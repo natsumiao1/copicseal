@@ -30,8 +30,8 @@ interface FilterStoreState extends FilterCriteria {
   toggleCollapsedSection: (section: FilterSectionKey) => void;
   /** 清空全部筛选条件（不清标签缓存与折叠状态） */
   clearCriteria: () => void;
-  /** 为指定目录批量读取 XMP 标签；同目录已读过则跳过 */
-  loadTags: (paths: string[], folder: string) => Promise<void>;
+  /** 为指定目录批量读取 XMP 标签；同目录已读过则跳过，`force` 时忽略该缓存重读 */
+  loadTags: (paths: string[], folder: string, options?: { force?: boolean }) => Promise<void>;
 }
 
 interface FilterPersistedState {
@@ -65,9 +65,9 @@ export const useFilterStore = create<FilterStoreState>()(
       toggleCollapsedSection: (section) =>
         set((state) => ({ collapsedSections: toggle(state.collapsedSections, section) })),
       clearCriteria: () => set({ ratings: [], labels: [], types: [], ratios: [] }),
-      loadTags: async (paths, folder) => {
+      loadTags: async (paths, folder, options) => {
         const state = get();
-        if (state.tagsFolder === folder && state.tagsStatus !== 'idle') {
+        if (!options?.force && state.tagsFolder === folder && state.tagsStatus !== 'idle') {
           return; // 本目录已读取或读取中
         }
         set({ tags: {}, tagsFolder: folder, tagsStatus: 'loading' });

@@ -30,6 +30,7 @@ import {
 } from '@/shared/components/co-open-directory-link';
 import { CoPanelSection } from '@/shared/components/co-panel-section';
 import { CoWindowHeader } from '@/shared/components/co-window-header';
+import { ensurePhotoExif } from '@/shared/hooks/use-photo-exif';
 import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import {
@@ -47,7 +48,6 @@ import {
   TemplatePropsPanel,
   TemplateSelector,
 } from '../exports';
-import { ensurePhotoExif } from '../hooks/use-photo-exif';
 import { type PhotoPaletteState, usePhotoPalette } from '../hooks/use-photo-palette';
 import {
   getTemplatePhotoConfig,

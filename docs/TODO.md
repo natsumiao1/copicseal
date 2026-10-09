@@ -122,6 +122,7 @@
 - [ ] **A28 旧配置迁移**｜缺口｜成本 中 —— 旧版 electron-store JSON，新版 SQLite `config_entries`，无迁移代码 → 升级后设置全丢（待确认是否有安装器侧迁移）
 - [ ] **A29 拼图标注（arrow / rect / circle）**｜缺口｜成本 中（同 §2）—— `text` 已完成，剩余三类类型、store 齐全但无 UI 入口
 - [ ] **A30 收藏 / 最近使用不持久化**｜缺口｜成本 小 —— 组件内 `useState` 硬编码初值，刷新即丢；旧版本无此功能，属新增未完成
+- [ ] **A31 去除 EXIF 支持 HEIC**｜新增未完成｜成本 中 —— 内容面板右键「去除 EXIF 信息」已支持 JPEG / PNG / WebP（见 features §4.6）；HEIC / HIF 需解析 BMFF 的 `Exif` box，未实现时菜单项置灰提示
 
 ### B. 默认值差异（影响开箱观感）
 

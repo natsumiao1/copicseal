@@ -57,6 +57,12 @@ export interface FileServiceContract {
   clearBrowseThumbnail(path: string, cacheDir: string): Promise<boolean>;
   /** 把文件移入系统回收站（Windows 回收站 / macOS 废纸篓），供内容面板右键删除使用。 */
   moveToTrash(path: string): Promise<void>;
+  /**
+   * 原地去除图片内嵌元数据（EXIF；可选连同内嵌 XMP），供内容面板右键使用。
+   * 段 / 块级删除、不重新编码，方向（Orientation）标签保留；
+   * 支持 JPEG / PNG / WebP。返回是否真的改写了文件。
+   */
+  stripImageExif(path: string, removeXmp: boolean): Promise<boolean>;
   importImageToCache(path: string, cacheDir: string): Promise<CachedImageMeta>;
   importImageBytesToCache(
     name: string,

@@ -101,6 +101,15 @@ export function clearBrowseThumbnail(path: string, cacheDir: string): Promise<bo
 export function moveToTrash(path: string): Promise<void> {
   return invoke('move_to_trash', { path });
 }
+/**
+ * 原地去除图片内嵌元数据：删除 EXIF，可选连同内嵌 XMP 一起删。
+ *
+ * 段 / 块级删除，不重新编码（像素零损失）；方向（Orientation）标签保留。
+ * 支持 JPEG / PNG / WebP，其余格式返回错误。返回是否真的改写了文件。
+ */
+export function stripImageExif(path: string, removeXmp: boolean): Promise<boolean> {
+  return invoke('strip_image_exif', { path, removeXmp });
+}
 export function listSystemFonts(): Promise<FontInfo[]> {
   return invoke('list_system_fonts');
 }

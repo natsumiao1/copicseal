@@ -14,6 +14,7 @@ import {
   moveToTrash,
   readImageFile,
   readImageTags,
+  stripImageExif,
   writeBinaryFile,
 } from '@/platform/providers/tauri/api';
 
@@ -34,6 +35,7 @@ export const fileService: FileServiceContract = {
   ensureBrowseThumbnail,
   clearBrowseThumbnail,
   moveToTrash,
+  stripImageExif,
   importImageToCache,
   importImageBytesToCache,
   getCacheOverview,
