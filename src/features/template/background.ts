@@ -96,7 +96,13 @@ export const TEMPLATE_BACKGROUND_FIELDS = [
 export type TemplateBackground = TemplateParams<typeof TEMPLATE_BACKGROUND_FIELDS>;
 
 /**
- * 画框比例（宽 / 高）。
+ * 画框高宽比（高 / 宽）——与 `render-size.ts` 中所有 aspect 同一约定。
+ *
+ * 字符串本身按「宽:高」存储（`2:3` 即竖框），但调用方的几何全按高 / 宽解算：
+ * `height = width * aspect`、contain 反解 `available.height / aspect`、
+ * 自动比例兜底 `canvasAspect * (1 - horizontal) + vertical`，
+ * 且 `??` 另一侧的兜底值（`measureCanvasAspect` / `canvasAspectOf`）也是高 / 宽。
+ * 因此这里必须返回 height / width，否则 2:3 会被渲染成横框（横竖颠倒）。
  *
  * 手动选择时返回解析出的数值比例；「自动」、无背景或取值非法时返回 null，
  * 调用方回落到画布（照片）自身的比例——横竖因此始终有确定来源。
@@ -110,7 +116,7 @@ export function resolveFrameAspect(background: TemplateBackground): number | nul
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return null;
   }
-  return width / height;
+  return height / width;
 }
 
 /**
