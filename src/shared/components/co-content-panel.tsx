@@ -1,19 +1,37 @@
-import { Check, Eraser, Fingerprint, FolderOpen, Images, Loader2, Trash2, X } from 'lucide-react';
+import {
+  Check,
+  Eraser,
+  Fingerprint,
+  FolderOpen,
+  Images,
+  Loader2,
+  Palette,
+  Star,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { pathExists, platform, toNativeFileUrl } from '@/platform';
-import type { FolderImageFile } from '@/platform/contracts';
+import type { FolderImageFile, ImageTags, ImageTagWrite } from '@/platform/contracts';
 import { useElementSize } from '@/shared/hooks/use-element-size';
 import { invalidatePhotoExif } from '@/shared/hooks/use-photo-exif';
 import { usePhotoImportByPath } from '@/shared/hooks/use-photo-import-by-path';
 import { usePhotos } from '@/shared/hooks/use-photos';
 import {
+  COLOR_LABEL_BG,
+  COLOR_LABEL_TEXT,
+  COLOR_LABELS,
+  type ColorLabel,
   collectAvailability,
   type FilterCriteria,
   hasCriteria,
   matchesFilter,
+  normalizeColorLabel,
   resolveCriteria,
+  STAR_LEVELS,
 } from '@/shared/lib/image-filter';
+import { isEditableTarget } from '@/shared/lib/keyboard';
 import { cn } from '@/shared/lib/utils';
 import { useFileSourceStore } from '@/shared/store/use-file-source-store';
 import { useFilterStore } from '@/shared/store/use-filter-store';
@@ -31,6 +49,9 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/shared/ui/context-menu';
 import { Switch } from '@/shared/ui/switch';
@@ -42,6 +63,38 @@ const STRIPPABLE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
 function isStrippable(name: string): boolean {
   const lower = name.toLowerCase();
   return STRIPPABLE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+/**
+ * 打标快捷键的键位表（与 Adobe Bridge 一致）：`0` 清除星级、`1-5` 星级、
+ * `6-9` 红 / 黄 / 绿 / 蓝标签；紫色不设快捷键（Bridge 官方也只开放 6-9）。
+ */
+const DIGIT_LABELS: Record<string, ColorLabel> = {
+  '6': 'red',
+  '7': 'yellow',
+  '8': 'green',
+  '9': 'blue',
+};
+
+/** 数字键 → 一次打标写入；非打标按键返回 `null`（交还原生行为）。 */
+function tagWriteFromDigit(key: string): ImageTagWrite | null {
+  if (key === '0') {
+    return { kind: 'rating', value: null };
+  }
+  if (key >= '1' && key <= '5') {
+    return { kind: 'rating', value: Number(key) };
+  }
+  const label = DIGIT_LABELS[key];
+  return label ? { kind: 'label', value: label } : null;
+}
+
+/** 单张成功 toast 的文案：说明这次打标的结果。 */
+function describeTagWrite(write: ImageTagWrite, name: string): string {
+  if (write.kind === 'rating') {
+    return write.value === null ? `已清除星级：${name}` : `已设为 ${write.value} 星：${name}`;
+  }
+  const text = write.value ? COLOR_LABEL_TEXT[write.value as ColorLabel] : null;
+  return text ? `已打${text}标签：${name}` : `已清除标签：${name}`;
 }
 
 /** 网格列间距（对应 `gap-2`）。容器 `px-2` 的内边距不计入 contentRect，无需参与计算。 */
@@ -184,27 +237,6 @@ export function CoContentPanel() {
       return next.length === prev.length ? prev : next;
     });
   }, [visibleEntries]);
-
-  // Esc 清除多选：确认弹窗或右键菜单开着时不动（那次 Esc 归它们）
-  useEffect(() => {
-    if (selectedPaths.length === 0) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.key !== 'Escape' ||
-        deleteTargets !== null ||
-        stripTargets !== null ||
-        menuOpenRef.current
-      ) {
-        return;
-      }
-      setSelectedPaths([]);
-      selectionAnchorRef.current = null;
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [deleteTargets, selectedPaths.length, stripTargets]);
 
   /**
    * 行布局只跟随容器宽度：占位一律正方形，横竖照片的显示面积相当，
@@ -441,6 +473,101 @@ export function CoContentPanel() {
   );
 
   /**
+   * 打标（星级 / 颜色标签）：作用于传入的目标集合，结果增量并入筛选 store。
+   *
+   * toggle 语义：目标里全部已是这次要写的值 → 变成清除（`Cmd/Ctrl+0` 恒为清除）；
+   * 批量沿用 `runBatch`（串行 + 单条进度 toast + 失败汇总）。会话缓存副本一并写，
+   * 导出勾「包含原始元数据」时新标签随文件带出；只动 XMP 不碰 EXIF 段，卡片无需作废。
+   */
+  const applyTag = useCallback(
+    async (targets: FolderImageFile[], write: ImageTagWrite) => {
+      const currentTags = useFilterStore.getState().tags;
+      const readDimension = (target: FolderImageFile) => {
+        const tag = currentTags[target.path];
+        return write.kind === 'rating' ? (tag?.rating ?? null) : normalizeColorLabel(tag?.label);
+      };
+      const desired = write.kind === 'rating' ? write.value : normalizeColorLabel(write.value);
+      const alreadyApplied =
+        desired !== null && targets.every((target) => readDimension(target) === desired);
+      const finalWrite: ImageTagWrite =
+        desired !== null && alreadyApplied ? { kind: write.kind, value: null } : write;
+
+      const written: ImageTags[] = [];
+      await runBatch('打标', targets, async (target) => {
+        const result = await platform.files.writeImageTag(target.path, finalWrite);
+        // 会话缓存副本一并写：素材会话与导出读的是副本，只改原图会带不出新标签
+        for (const photo of photos) {
+          if (photo.path !== target.path && photo.originalPath === target.path) {
+            await platform.files.writeImageTag(photo.path, finalWrite);
+          }
+        }
+        written.push(result);
+        return describeTagWrite(finalWrite, target.name);
+      });
+
+      // 写入结果增量并入标签数据：不走 loadTags(force)（会把 tagsStatus 打回 loading，
+      // resolveCriteria 会把星级 / 标签条件判成未就绪，列表闪一下再收窄）
+      useFilterStore.getState().patchTags(written);
+    },
+    [photos, runBatch],
+  );
+
+  /**
+   * Esc 清除多选 + 打标快捷键（`Cmd/Ctrl+0~9`，键位与语义对齐 Adobe Bridge，
+   * 见 docs/requirements.md §4.3）。打标作用于选择集合，无选中时作用于「当前图片」。
+   *
+   * 确认弹窗 / 右键菜单打开、批量任务进行中、焦点在输入控件上时一律不接管。
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const blocked =
+        deleteTargets !== null ||
+        stripTargets !== null ||
+        menuOpenRef.current ||
+        batchBusy ||
+        isEditableTarget(event.target);
+
+      if (event.key === 'Escape') {
+        // 确认弹窗或右键菜单开着时不动（那次 Esc 归它们）
+        if (blocked || selectedPaths.length === 0) {
+          return;
+        }
+        setSelectedPaths([]);
+        selectionAnchorRef.current = null;
+        return;
+      }
+
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || blocked) {
+        return;
+      }
+      const write = tagWriteFromDigit(event.key);
+      if (!write) {
+        return;
+      }
+      const targets =
+        selectedEntries.length > 0
+          ? selectedEntries
+          : entries.filter((entry) => entry.path === selectedId);
+      if (targets.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      void applyTag(targets, write);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    applyTag,
+    batchBusy,
+    deleteTargets,
+    entries,
+    selectedEntries,
+    selectedId,
+    selectedPaths.length,
+    stripTargets,
+  ]);
+
+  /**
    * 单元格点击：按修饰键分流。
    *
    * 普通点击沿用原语义（加入素材会话并设为当前图片），同时把选择集合收缩为这一张；
@@ -493,6 +620,10 @@ export function CoContentPanel() {
     // 「当前图片」的高亮环与「多选」的对勾是两套状态，可以同时成立
     const isCurrent = selectedId === entry.path;
     const isSelected = selectedSet.has(entry.path);
+    // 打标角标的数据源：与筛选器共用同一份标签数据（tags）
+    const tag = tags[entry.path];
+    const entryRating = tag?.rating ?? null;
+    const entryLabel = normalizeColorLabel(tag?.label);
     // 渲染期只算张数、不取实体（选择集可能很大，每个格子都过滤全量就是 O(格子 × 条目)）；
     // 实体在菜单点击时经 resolveTargets / resolveStrippableTargets 取一次即可
     const targetCount = isSelected ? selectedEntries.length : 1;
@@ -560,6 +691,23 @@ export function CoContentPanel() {
                     <Check className="size-2.5" />
                   </span>
                 ) : null}
+                {/* 打标角标：与筛选器同源（标签数据），打完即时可见 */}
+                {entryRating || entryLabel ? (
+                  <span className="absolute bottom-1 left-1 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 leading-none text-white">
+                    {entryRating ? (
+                      <>
+                        <Star className="size-2.5 fill-current text-amber-400" />
+                        <span className="text-[9px] tabular-nums">{entryRating}</span>
+                      </>
+                    ) : null}
+                    {entryLabel ? (
+                      <span
+                        className={cn('size-2 rounded-full', COLOR_LABEL_BG[entryLabel])}
+                        title={COLOR_LABEL_TEXT[entryLabel]}
+                      />
+                    ) : null}
+                  </span>
+                ) : null}
               </div>
               <div className="flex items-baseline gap-1.5 px-0.5 pt-1 leading-4">
                 <span className="min-w-0 truncate text-[10px] text-foreground/90">
@@ -616,6 +764,65 @@ export function CoContentPanel() {
             <Trash2 />
             删除{targetCount > 1 ? `（${targetCount} 张）` : ''}
           </ContextMenuItem>
+          {/* 打标子菜单：紫色无快捷键（与 Bridge 一致），这里是它的唯一入口 */}
+          <ContextMenuSub>
+            <ContextMenuSubTrigger disabled={batchBusy}>
+              <Star />
+              星级{targetCount > 1 ? `（${targetCount} 张）` : ''}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              {STAR_LEVELS.map((level) => (
+                <ContextMenuItem
+                  key={level}
+                  disabled={batchBusy}
+                  onSelect={() =>
+                    void applyTag(resolveTargets(entry), { kind: 'rating', value: level })
+                  }
+                >
+                  <Star className="fill-current text-amber-500" />
+                  {level} 星
+                </ContextMenuItem>
+              ))}
+              <ContextMenuItem
+                disabled={batchBusy}
+                onSelect={() =>
+                  void applyTag(resolveTargets(entry), { kind: 'rating', value: null })
+                }
+              >
+                <Eraser />
+                清除星级
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+          <ContextMenuSub>
+            <ContextMenuSubTrigger disabled={batchBusy}>
+              <Palette />
+              颜色标签{targetCount > 1 ? `（${targetCount} 张）` : ''}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              {COLOR_LABELS.map((label) => (
+                <ContextMenuItem
+                  key={label}
+                  disabled={batchBusy}
+                  onSelect={() =>
+                    void applyTag(resolveTargets(entry), { kind: 'label', value: label })
+                  }
+                >
+                  <span className={cn('size-2.5 shrink-0 rounded-full', COLOR_LABEL_BG[label])} />
+                  {COLOR_LABEL_TEXT[label]}
+                </ContextMenuItem>
+              ))}
+              <ContextMenuItem
+                disabled={batchBusy}
+                onSelect={() =>
+                  void applyTag(resolveTargets(entry), { kind: 'label', value: null })
+                }
+              >
+                <Eraser />
+                清除标签
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
         </ContextMenuContent>
       </ContextMenu>
     );

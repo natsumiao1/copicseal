@@ -32,6 +32,13 @@ interface FilterStoreState extends FilterCriteria {
   clearCriteria: () => void;
   /** 为指定目录批量读取 XMP 标签；同目录已读过则跳过，`force` 时忽略该缓存重读 */
   loadTags: (paths: string[], folder: string, options?: { force?: boolean }) => Promise<void>;
+  /**
+   * 打标成功后把写入结果增量并入标签数据。
+   *
+   * 刻意不走 `loadTags(force)`：那会把 `tagsStatus` 打回 `loading`，
+   * `resolveCriteria` 会把星级 / 标签条件判成未就绪，列表闪一下再收窄。
+   */
+  patchTags: (updates: ImageTags[]) => void;
 }
 
 interface FilterPersistedState {
@@ -89,6 +96,17 @@ export const useFilterStore = create<FilterStoreState>()(
           }
         }
       },
+      patchTags: (updates) =>
+        set((state) => {
+          if (updates.length === 0) {
+            return state;
+          }
+          const tags = { ...state.tags };
+          for (const item of updates) {
+            tags[item.path] = item;
+          }
+          return { tags };
+        }),
     }),
     {
       name: STORAGE_KEY,

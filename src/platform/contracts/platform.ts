@@ -11,6 +11,7 @@ import type {
   FontInfo,
   ImageFileMeta,
   ImageTags,
+  ImageTagWrite,
   RootDirectory,
 } from './index';
 import type { ImportProgressSnapshot } from './services';
@@ -52,6 +53,13 @@ export interface FileServiceContract {
   listFolderImages(path: string): Promise<FolderImageFile[]>;
   /** 批量读取图片的 XMP 标签（星级 / 颜色标签），供筛选器过滤使用。 */
   readImageTags(paths: string[]): Promise<ImageTags[]>;
+  /**
+   * 打标写入：设置或清除一张图片的星级 / 颜色标签，返回写后重读的标签。
+   *
+   * 写回「有效来源」：已有 `.xmp` sidecar 就更新它；否则内嵌 XMP 可原地改写
+   * （JPEG / PNG / WebP，段 / 块级替换、不重编码）就改内嵌；都没有则新建 sidecar。
+   */
+  writeImageTag(path: string, write: ImageTagWrite): Promise<ImageTags>;
   ensureBrowseThumbnail(path: string, cacheDir: string): Promise<BrowseThumbnailMeta>;
   /** 清空直览条目的缩略图缓存（派生数据），返回是否真的删掉了文件。 */
   clearBrowseThumbnail(path: string, cacheDir: string): Promise<boolean>;

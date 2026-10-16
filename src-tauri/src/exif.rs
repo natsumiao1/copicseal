@@ -352,11 +352,11 @@ pub fn strip_exif_gps(exif_segment: Vec<u8>) -> Vec<u8> {
 /// APP1 段里的 EXIF 标识（其后是 TIFF 容器）。
 const EXIF_HEADER: &[u8] = b"Exif\0\0";
 /// APP1 段里的标准 XMP 包标识。
-const XMP_HEADER: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+pub(crate) const XMP_HEADER: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
 /// APP1 段里的 Extended XMP 标识（超长 XMP 的分块传输）。
-const XMP_EXT_HEADER: &[u8] = b"http://ns.adobe.com/xmp/extension/\0";
+pub(crate) const XMP_EXT_HEADER: &[u8] = b"http://ns.adobe.com/xmp/extension/\0";
 /// PNG 文本块里的 XMP 关键字（`iTXt` / `zTXt` / `tEXt` 的关键字以 NUL 结尾）。
-const PNG_XMP_KEYWORD: &[u8] = b"XML:com.adobe.xmp\0";
+pub(crate) const PNG_XMP_KEYWORD: &[u8] = b"XML:com.adobe.xmp\0";
 
 /// 原地去除图片内嵌元数据：删掉 EXIF，可选连同内嵌 XMP 一起删。
 ///

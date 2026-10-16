@@ -1,9 +1,9 @@
 import { Check, ChevronDown, ChevronRight, Loader2, Star } from 'lucide-react';
 import { type ReactNode, useMemo } from 'react';
 import {
+  COLOR_LABEL_BG,
   COLOR_LABEL_TEXT,
   COLOR_LABELS,
-  type ColorLabel,
   collectAvailability,
   collectTagCounts,
   type FilterCriteria,
@@ -15,15 +15,6 @@ import {
 import { cn } from '@/shared/lib/utils';
 import { useFileSourceStore } from '@/shared/store/use-file-source-store';
 import { type FilterSectionKey, useFilterStore } from '@/shared/store/use-filter-store';
-
-/** 五种颜色标签的色块底色（对应 XMP Label 的标准取值）。 */
-const COLOR_LABEL_BG: Record<ColorLabel, string> = {
-  red: 'bg-red-500',
-  yellow: 'bg-yellow-400',
-  green: 'bg-green-500',
-  blue: 'bg-blue-500',
-  purple: 'bg-purple-500',
-};
 
 /** 条件区标题（点击折叠 / 展开）。 */
 function SectionHeader({

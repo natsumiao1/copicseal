@@ -20,6 +20,7 @@ import type {
   FontInfo,
   ImageFileMeta,
   ImageTags,
+  ImageTagWrite,
   NativeMenuEvent,
   RootDirectory,
   UpsertComarkTemplatePayload,
@@ -47,6 +48,7 @@ export type {
   FontInfo,
   ImageFileMeta,
   ImageTags,
+  ImageTagWrite,
   OutputConfig,
   OutputPreset,
   RootDirectory,
@@ -85,6 +87,10 @@ export function listFolderImages(path: string): Promise<FolderImageFile[]> {
 /** 批量读取图片的 XMP 标签（星级 / 颜色标签）。 */
 export function readImageTags(paths: string[]): Promise<ImageTags[]> {
   return invoke('read_image_tags', { paths });
+}
+/** 打标写入：设置或清除一张图片的星级 / 颜色标签，返回写后重读的标签。 */
+export function writeImageTag(path: string, write: ImageTagWrite): Promise<ImageTags> {
+  return invoke('write_image_tag', { path, write });
 }
 /** 为直览条目按需生成缩略图（直接以原文件为源，不复制原文件）。 */
 export function ensureBrowseThumbnail(

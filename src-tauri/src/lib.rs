@@ -70,6 +70,7 @@ pub fn run() {
             exif::strip_exif_gps,
             exif::strip_image_exif,
             tags::read_image_tags,
+            tags::write_image_tag,
             font::list_system_fonts,
             system::get_app_info,
             menu::sync_view_menu,

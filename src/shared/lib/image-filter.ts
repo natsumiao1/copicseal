@@ -13,6 +13,15 @@ export const COLOR_LABEL_TEXT: Record<ColorLabel, string> = {
   purple: '紫色',
 };
 
+/** 颜色标签的圆点底色（Tailwind 类），筛选器条件行与内容面板角标共用一份。 */
+export const COLOR_LABEL_BG: Record<ColorLabel, string> = {
+  red: 'bg-red-500',
+  yellow: 'bg-yellow-400',
+  green: 'bg-green-500',
+  blue: 'bg-blue-500',
+  purple: 'bg-purple-500',
+};
+
 /** 星级取值 1-5。 */
 export const STAR_LEVELS = [1, 2, 3, 4, 5] as const;
 

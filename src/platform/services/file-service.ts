@@ -16,6 +16,7 @@ import {
   readImageTags,
   stripImageExif,
   writeBinaryFile,
+  writeImageTag,
 } from '@/platform/providers/tauri/api';
 
 /**
@@ -32,6 +33,7 @@ export const fileService: FileServiceContract = {
   listRootDirectories,
   listFolderImages,
   readImageTags,
+  writeImageTag,
   ensureBrowseThumbnail,
   clearBrowseThumbnail,
   moveToTrash,
@@ -52,5 +54,6 @@ export type {
   FolderImageFile,
   ImageFileMeta,
   ImageTags,
+  ImageTagWrite,
   RootDirectory,
 } from '@/platform/contracts';

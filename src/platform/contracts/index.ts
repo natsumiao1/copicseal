@@ -218,7 +218,7 @@ export interface RootDirectory {
 }
 
 /**
- * 图片标签：XMP 元数据里的星级与颜色标签（只读）。
+ * 图片标签：XMP 元数据里的星级与颜色标签。
  *
  * 星级 / 颜色标签不在 EXIF 标准内，实际存放在 XMP 中
  * （JPEG 的 APP1 XMP 段、各格式的元数据盒，或同名 `.xmp` sidecar）。
@@ -230,6 +230,15 @@ export interface ImageTags {
   /** 颜色标签 `Red` / `Yellow` / `Green` / `Blue` / `Purple`；无标签为 null */
   label: string | null;
 }
+
+/**
+ * 一次打标写入：把其中一个标签维度设为指定值，`null` 表示清除该属性。
+ *
+ * 与 Rust 侧的 `TagWrite` 同构；写回「有效来源」（sidecar → 内嵌段 / 块 → 新建 sidecar）。
+ */
+export type ImageTagWrite =
+  | { kind: 'rating'; value: number | null }
+  | { kind: 'label'; value: string | null };
 
 /** 直览目录内的图片条目（不复制原文件）。 */
 export interface FolderImageFile {
